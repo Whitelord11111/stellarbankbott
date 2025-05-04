@@ -8,7 +8,7 @@ from aiohttp import web
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import CommandStart
-from aiogram.filters.text import Text
+from aiogram.filters import Text
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
