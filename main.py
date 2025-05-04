@@ -99,18 +99,22 @@ async def show_profile(message: Message):
     stats = user_stats.get(uid, {"total_stars": 0, "total_spent": 0.0})
     await message.answer(f"👤 профиль:\n🆔 id: {uid}\n⭐️ всего звёзд куплено: {stats['total_stars']}\n💰 потрачено: {stats['total_spent']:.2f}₽")
 
+# Пример замены для блока buy_stars:
 @dp.message(F.text == "⭐️ Покупка звёзд")
 async def buy_stars(message: Message):
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton("50 ⭐️ за 80₽", callback_data="buy_50"),
-         InlineKeyboardButton("100 ⭐️ за 160₽", callback_data="buy_100")],
-        [InlineKeyboardButton("150 ⭐️ за 240₽", callback_data="buy_150"),
-         InlineKeyboardButton("200 ⭐️ за 320₽", callback_data="buy_200")],
-        [InlineKeyboardButton("300 ⭐️ за 480₽", callback_data="buy_300"),
-         InlineKeyboardButton("500 ⭐️ за 800₽", callback_data="buy_500")],
-        [InlineKeyboardButton("выбрать своё количество", callback_data="buy_custom")]
+        [
+            InlineKeyboardButton(text="50 ⭐️ за 80₽", callback_data="buy_50"),
+            InlineKeyboardButton(text="100 ⭐️ за 160₽", callback_data="buy_100")
+        ],
+        [
+            InlineKeyboardButton(text="150 ⭐️ за 240₽", callback_data="buy_150"),
+            InlineKeyboardButton(text="200 ⭐️ за 320₽", callback_data="buy_200")
+        ],
+        [InlineKeyboardButton(text="выбрать своё количество", callback_data="buy_custom")]
     ])
     await message.answer("выбери пакет звёзд:", reply_markup=kb)
+
 
 @dp.callback_query(F.data.startswith("buy_"))
 async def handle_buy_package(call: CallbackQuery, state: FSMContext):
