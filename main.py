@@ -23,7 +23,8 @@ FRAGMENT_BASE = "https://fragmentapi.com/api"
 CRYPTOBOT_API = "https://pay.crypt.bot/api"
 DATA_FILE = "data.json"
 WEBHOOK_PATH = f"/webhook/{TOKEN}"
-WEBHOOK_URL = os.getenv("https://stellarbankbot.onrender.com") + WEBHOOK_PATH
+WEBHOOK_HOST = "https://stellarbankbot.onrender.com"
+WEBHOOK_URL = WEBHOOK_HOST + WEBHOOK_PATH
 PORT = int(os.getenv("PORT", "8080"))
 
 # --- LOGGING ---
