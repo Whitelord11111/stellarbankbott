@@ -1,16 +1,24 @@
-# Telegram Bot
-BOT_TOKEN=7391952562:AAHEVkEAqvyEc5YYwQZowaQVOoXYqDCKcC4
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Telegram
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 # Webhook
-WEBHOOK_HOST=https://stellarbankbot.onrender.com
-WEBHOOK_PATH=/webhook
-CRYPTO_PATH=/crypto
+WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")
+WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "/webhook")
+WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 
 # CryptoBot
-CRYPTOBOT_TOKEN=378343:AA836haaZrzZYInSBc1fXlm9HcgQsz4ChrS
+CRYPTOBOT_TOKEN = os.getenv("CRYPTOBOT_TOKEN")
+CRYPTO_PATH = os.getenv("CRYPTO_PATH", "/crypto")
+CRYPTO_WEBHOOK_URL = f"{WEBHOOK_HOST}{CRYPTO_PATH}"
 
-# Fragment API
-FRAGMENT_API_KEY=c32ec465-5d81-4ca0-84d9-df6840773859
+# Fragment
+FRAGMENT_API_KEY = os.getenv("FRAGMENT_API_KEY")
 
 # Server
-PORT=8080
+PORT = int(os.getenv("PORT", 8080))
+
