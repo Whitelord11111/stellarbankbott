@@ -81,9 +81,9 @@ async def cmd_start(message: Message):
 
     kb = ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton("👛 Баланс")],
-            [KeyboardButton("👤 Профиль")],
-            [KeyboardButton("⭐️ Покупка звёзд")]
+            [KeyboardButton(text="👛 Баланс")],
+            [KeyboardButton(text="👤 Профиль")],
+            [KeyboardButton(text="⭐️ Покупка звёзд")]
         ],
         resize_keyboard=True
     )
