@@ -14,7 +14,6 @@ from aiogram.filters import Command
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.contrib.middlewares.logging import LoggingMiddleware
 
 # --- CONFIG ---
 TOKEN            = '7391952562:AAHEVkEAqvyEc5YYwQZowaQVOoXYqDCKcC4'
@@ -37,7 +36,6 @@ logger = logging.getLogger(__name__)
 # --- BOT & DISPATCHER ---
 bot = Bot(token=TOKEN)
 dp  = Dispatcher(bot, storage=MemoryStorage())
-dp.middleware.setup(LoggingMiddleware())
 
 # --- PERSISTENCE ---
 user_balances = {}
@@ -215,60 +213,13 @@ async def create_invoice(call: CallbackQuery, state: FSMContext):
     async with aiohttp.ClientSession() as sess:
         async with sess.post(f"{CRYPTOBOT_API}/createInvoice", json=payload, headers=headers) as resp:
             res = await resp.json()
-    if "result" not in res or "invoice_id" not in res["result"]:
-        await call.message.answer("Ошибка при создании платежа.")
-        return await state.clear()
-    pay_url = res["result"]["pay_url"]
-    inv_id  = res["result"]["invoice_id"]
-    await state.update_data(invoice_id=inv_id)
-    await call.message.answer(f"🔗 Оплати здесь: {pay_url}")
-    asyncio.create_task(check_payment(inv_id, call.from_user.id))
-
-async def check_payment(invoice_id: str, user_id: int):
-    headers = {"Crypto-Pay-API-Token": CRYPTOBOT_TOKEN}
-    for _ in range(60):
-        async with aiohttp.ClientSession() as sess:
-            async with sess.get(f"{CRYPTOBOT_API}/getInvoices", headers=headers) as resp:
-                res = await resp.json()
-        items = res.get("result",{}).get("items",[])
-        if any(str(i.get("invoice_id"))==str(invoice_id) and i.get("status")=="paid" for i in items):
-            await bot.send_message(user_id, "✅ Оплата подтверждена!")
-            # После подтверждения оплаты, запросить тег
-            await bot.send_message(user_id, "Пожалуйста, введи свой Telegram-тег для зачисления звёзд.")
-            await BuyStars.waiting_for_tag.set()
-            break
-        await asyncio.sleep(5)
-
-@dp.message(BuyStars.waiting_for_tag)
-async def input_tag(message: Message, state: FSMContext):
-    uid = str(message.from_user.id)
-    tag = message.text.strip().lstrip('@')
-    async with aiohttp.ClientSession() as sess:
-        url = f"{FRAGMENT_BASE}/users/{tag}"
-        async with sess.get(url) as r:
-            data = await r.json()
-    if not data.get("found"):
-        await message.answer("Пользователь с таким тегом не найден.")
-        return await state.clear()
-    amount = (await state.get_data())["amount"]
-    # Отправка звёзд через Fragment API
-    payload = {
-        "api_key": FRAGMENT_API_KEY,
-        "target": tag,
-        "amount": amount
-    }
-    async with aiohttp.ClientSession() as sess:
-        async with sess.post(f"{FRAGMENT_BASE}/buy_stars", json=payload) as r:
-            data = await r.json()
-    if data.get("status") == "success":
-        # Успешно отправлено
-        user_balances[uid] -= amount
-        user_stats[uid]["total_stars"] += amount
-        user_stats[uid]["total_spent"] += (amount * 1.6)
-        await message.answer(f"Звёзды успешно отправлены на @{tag}.")
+    if res.get("status") == "success":
+        url = res.get("url")
+        await call.message.answer(f"Перейди по ссылке для оплаты: {url}")
+        await state.clear()
     else:
-        await message.answer("Ошибка при отправке звёзд. Попробуйте позже.")
-    await state.clear()
+        await call.message.answer("Ошибка при создании счета.")
+        await state.clear()
 
 # --- WEBHOOK SETUP ---
 app = web.Application()
