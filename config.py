@@ -1,0 +1,16 @@
+# Telegram Bot
+BOT_TOKEN=7391952562:AAHEVkEAqvyEc5YYwQZowaQVOoXYqDCKcC4
+
+# Webhook
+WEBHOOK_HOST=https://stellarbankbot.onrender.com
+WEBHOOK_PATH=/webhook
+CRYPTO_PATH=/crypto
+
+# CryptoBot
+CRYPTOBOT_TOKEN=378343:AA836haaZrzZYInSBc1fXlm9HcgQsz4ChrS
+
+# Fragment API
+FRAGMENT_API_KEY=c32ec465-5d81-4ca0-84d9-df6840773859
+
+# Server
+PORT=8080
