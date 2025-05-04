@@ -4,7 +4,7 @@ import os
 import logging
 import aiohttp
 from aiohttp import web
-from aiogram import Bot, Dispatcher, F
+from aiogram import Bot, Dispatcher
 from aiogram.types import (
     Update, Message, CallbackQuery,
     InlineKeyboardMarkup, InlineKeyboardButton,
@@ -14,6 +14,7 @@ from aiogram.filters import Command
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.contrib.middlewares.logging import LoggingMiddleware
 
 # --- CONFIG ---
 TOKEN            = '7391952562:AAHEVkEAqvyEc5YYwQZowaQVOoXYqDCKcC4'
@@ -35,7 +36,8 @@ logger = logging.getLogger(__name__)
 
 # --- BOT & DISPATCHER ---
 bot = Bot(token=TOKEN)
-dp  = Dispatcher(storage=MemoryStorage())
+dp  = Dispatcher(bot, storage=MemoryStorage())
+dp.middleware.setup(LoggingMiddleware())
 
 # --- PERSISTENCE ---
 user_balances = {}
@@ -230,40 +232,47 @@ async def check_payment(invoice_id: str, user_id: int):
                 res = await resp.json()
         items = res.get("result",{}).get("items",[])
         if any(str(i.get("invoice_id"))==str(invoice_id) and i.get("status")=="paid" for i in items):
-            await bot.send_message(user_id, "✅ Оплата получена! Введите Telegram‑тег (без @).")
-            await dp.current_state(user=user_id).set_state(BuyStars.waiting_for_tag)
-            return
+            await bot.send_message(user_id, "✅ Оплата подтверждена!")
+            # После подтверждения оплаты, запросить тег
+            await bot.send_message(user_id, "Пожалуйста, введи свой Telegram-тег для зачисления звёзд.")
+            await BuyStars.waiting_for_tag.set()
+            break
         await asyncio.sleep(5)
-    await bot.send_message(user_id, "⌛️ Время ожидания оплаты истекло.")
 
 @dp.message(BuyStars.waiting_for_tag)
-async def enter_tag(message: Message, state: FSMContext):
-    tag = message.text.strip()
-    # проверка существования тега
+async def input_tag(message: Message, state: FSMContext):
+    uid = str(message.from_user.id)
+    tag = message.text.strip().lstrip('@')
     async with aiohttp.ClientSession() as sess:
-        async with sess.get(f"{FRAGMENT_BASE}/check_username?username={tag}") as r:
+        url = f"{FRAGMENT_BASE}/users/{tag}"
+        async with sess.get(url) as r:
             data = await r.json()
-    if not data.get("exists"):
-        return await message.answer("Этот тег не существует. Попробуй ещё раз.")
-    # начисление звёзд
-    data = await state.get_data()
-    amount = data["amount"]
-    cost = data["cost"]
-    payload = {"username": tag, "amount": amount}
-    headers = {"Authorization": f"Bearer {FRAGMENT_API_KEY}"}
+    if not data.get("found"):
+        await message.answer("Пользователь с таким тегом не найден.")
+        return await state.clear()
+    amount = (await state.get_data())["amount"]
+    # Отправка звёзд через Fragment API
+    payload = {
+        "api_key": FRAGMENT_API_KEY,
+        "target": tag,
+        "amount": amount
+    }
     async with aiohttp.ClientSession() as sess:
-        async with sess.post(f"{FRAGMENT_BASE}/add_stars", json=payload, headers=headers) as r:
-            res = await r.json()
-    if res.get("success"):
-        user_stats[str(message.from_user.id)]["total_stars"] += amount
-        user_stats[str(message.from_user.id)]["total_spent"] += cost
-        await message.answer(f"🎉 Звезды зачислены на {tag}! Текущий баланс: {user_balances.get(str(message.from_user.id), 0)} ⭐️")
+        async with sess.post(f"{FRAGMENT_BASE}/buy_stars", json=payload) as r:
+            data = await r.json()
+    if data.get("status") == "success":
+        # Успешно отправлено
+        user_balances[uid] -= amount
+        user_stats[uid]["total_stars"] += amount
+        user_stats[uid]["total_spent"] += (amount * 1.6)
+        await message.answer(f"Звёзды успешно отправлены на @{tag}.")
     else:
-        await message.answer("Что-то пошло не так. Попробуйте позже.")
+        await message.answer("Ошибка при отправке звёзд. Попробуйте позже.")
+    await state.clear()
 
 # --- WEBHOOK SETUP ---
 app = web.Application()
-app.add_routes([web.post(WEBHOOK_PATH, dp.post)])
+app.add_routes([web.post(WEBHOOK_PATH, dp.update)])
 
 async def on_startup(app):
     await bot.set_webhook(WEBHOOK_URL)
