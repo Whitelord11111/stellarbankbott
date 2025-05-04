@@ -16,7 +16,6 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 
 # --- CONFIG ---
-# Вставьте сюда свои реальные токены:
 TOKEN            = '7391952562:AAHEVkEAqvyEc5YYwQZowaQVOoXYqDCKcC4'
 CRYPTOBOT_TOKEN  = '378343:AA836haaZrzZYInSBc1fXlm9HcgQsz4ChrS'
 FRAGMENT_API_KEY = 'c32ec465-5d81-4ca0-84d9-df6840773859'
@@ -178,7 +177,7 @@ async def select_crypto(call: CallbackQuery, state: FSMContext):
         await call.message.answer("Оплата в рублях пока недоступна.")
         await state.clear()
         return
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
+    kb = InlineKeyboardMarkup(inline_keyboard=[[ 
         InlineKeyboardButton(text="TON", callback_data="crypto_TON"),
         InlineKeyboardButton(text="USDT", callback_data="crypto_USDT"),
         InlineKeyboardButton(text="BTC", callback_data="crypto_BTC")
@@ -238,58 +237,47 @@ async def check_payment(invoice_id: str, user_id: int):
     await bot.send_message(user_id, "⌛️ Время ожидания оплаты истекло.")
 
 @dp.message(BuyStars.waiting_for_tag)
-async def receive_tag(message: Message, state: FSMContext):
-    tag = message.text.strip().lstrip("@")
-    if not tag.isalnum():
-        return await message.answer("Неверный формат тега.")
-    uid  = str(message.from_user.id)
+async def enter_tag(message: Message, state: FSMContext):
+    tag = message.text.strip()
+    # проверка существования тега
+    async with aiohttp.ClientSession() as sess:
+        async with sess.get(f"{FRAGMENT_BASE}/check_username?username={tag}") as r:
+            data = await r.json()
+    if not data.get("exists"):
+        return await message.answer("Этот тег не существует. Попробуй ещё раз.")
+    # начисление звёзд
     data = await state.get_data()
-    amt  = data["amount"]
+    amount = data["amount"]
     cost = data["cost"]
-    # проверяем пользователя в Fragment
+    payload = {"username": tag, "amount": amount}
+    headers = {"Authorization": f"Bearer {FRAGMENT_API_KEY}"}
     async with aiohttp.ClientSession() as sess:
-        async with sess.get(f"{FRAGMENT_BASE}/users/{tag}", headers={"Authorization":f"Bearer {FRAGMENT_API_KEY}"}) as r:
-            if r.status != 200:
-                return await message.answer("Тег не найден в Fragment.")
-    # отправляем звёзды
-    async with aiohttp.ClientSession() as sess:
-        async with sess.post(f"{FRAGMENT_BASE}/stars/send",
-                             headers={"Authorization":f"Bearer {FRAGMENT_API_KEY}"},
-                             json={"receiver":f"@{tag}","amount":amt}) as r:
-            if r.status != 200:
-                return await message.answer("Ошибка при отправке звёзд.")
-    # обновляем баланс
-    user_balances[uid] = user_balances.get(uid,0) + amt
-    stats = user_stats.setdefault(uid,{"total_stars":0,"total_spent":0.0})
-    stats["total_stars"]  += amt
-    stats["total_spent"]  += cost
-    save_data()
-    await message.answer(f"⭐️ @{tag} получил {amt} звёзд!")
-    await state.clear()
+        async with sess.post(f"{FRAGMENT_BASE}/add_stars", json=payload, headers=headers) as r:
+            res = await r.json()
+    if res.get("success"):
+        user_stats[str(message.from_user.id)]["total_stars"] += amount
+        user_stats[str(message.from_user.id)]["total_spent"] += cost
+        await message.answer(f"🎉 Звезды зачислены на {tag}! Текущий баланс: {user_balances.get(str(message.from_user.id), 0)} ⭐️")
+    else:
+        await message.answer("Что-то пошло не так. Попробуйте позже.")
 
-# --- WEBHOOK & SERVER ---
+# --- WEBHOOK SETUP ---
+app = web.Application()
+app.add_routes([web.post(WEBHOOK_PATH, dp.post)])
 
-async def on_startup(app: web.Application):
-    await bot.set_webhook(WEBHOOK_URL, allowed_updates=["message","callback_query"])
-    asyncio.create_task(auto_save())
-    logger.info(f"Webhook установлен: {WEBHOOK_URL}")
+async def on_startup(app):
+    await bot.set_webhook(WEBHOOK_URL)
 
-async def on_shutdown(app: web.Application):
+async def on_shutdown(app):
     await bot.delete_webhook()
-    logger.info("Webhook удалён")
 
-async def webhook_handler(request: web.Request):
-    body   = await request.read()
-    update = Update.model_validate_json(body.decode("utf-8"))
-    await dp.feed_update(bot, update)
-    return web.Response(text="ok")
-
-def main():
-    app = web.Application()
-    app.router.add_post(WEBHOOK_PATH, webhook_handler)
-    app.on_startup.append(on_startup)
-    app.on_shutdown.append(on_shutdown)
-    web.run_app(app, host="0.0.0.0", port=PORT)
+app.on_startup.append(on_startup)
+app.on_shutdown.append(on_shutdown)
 
 if __name__ == "__main__":
-    main()
+    # Start the auto-save task
+    loop = asyncio.get_event_loop()
+    loop.create_task(auto_save())
+    
+    # Run webhook
+    web.run_app(app, host="0.0.0.0", port=PORT)
