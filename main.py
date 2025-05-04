@@ -7,48 +7,42 @@ import aiohttp
 from aiohttp import web
 
 from aiogram import Bot, Dispatcher, types
-from aiogram.filters import CommandStart
-from aiogram.filters import Text
+from aiogram.filters import CommandStart, Text
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from aiocryptopay import AioCryptoPay, Networks
+from config import BOT_TOKEN, WEBHOOK_URL, WEBHOOK_PATH, CRYPTO_PATH, PORT, CRYPTOBOT_TOKEN, FRAGMENT_API_KEY
 
-# --- КОНФИГ ---
-BOT_TOKEN        = '7391952562:AAHEVkEAqvyEc5YYwQZowaQVOoXYqDCKcC4'
-CRYPTO_TOKEN     = '378343:AA836haaZrzZYInSBc1fXlm9HcgQsz4ChrS'
-FRAGMENT_API_KEY = 'c32ec465-5d81-4ca0-84d9-df6840773859'
-FRAGMENT_BASE    = "https://fragmentapi.com/api"
-
+# --- КОНФИГ --- 
 APP_URL      = os.getenv("APP_URL", "https://stellarbankbot.onrender.com")
-WEBHOOK_PATH = f"/webhook/{BOT_TOKEN}"
-WEBHOOK_URL  = APP_URL + WEBHOOK_PATH
-PORT         = int(os.getenv("PORT", "8080"))
-CRYPTO_PATH  = "/crypto-pay"
-DATA_FILE    = "data.json"
+WEBHOOK_URL  = WEBHOOK_URL
+WEBHOOK_PATH = WEBHOOK_PATH
+PORT         = PORT
+CRYPTO_PATH  = CRYPTO_PATH
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 bot    = Bot(token=BOT_TOKEN)
 dp     = Dispatcher(storage=MemoryStorage())
-crypto = AioCryptoPay(token=CRYPTO_TOKEN, network=Networks.MAIN_NET)
+crypto = AioCryptoPay(token=CRYPTOBOT_TOKEN, network=Networks.MAIN_NET)
 
 # --- ПЕРСИСТЕНС ---
 user_balances: dict[str,int] = {}
 user_stats:    dict[str,dict] = {}
 
 def load_data():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
+    if os.path.exists("data.json"):
+        with open("data.json", "r", encoding="utf-8") as f:
             d = json.load(f)
             return d.get("balances", {}), d.get("stats", {})
     return {}, {}
 
 def save_data():
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
+    with open("data.json", "w", encoding="utf-8") as f:
         json.dump({"balances": user_balances, "stats": user_stats}, f,
                   ensure_ascii=False, indent=2)
 
@@ -103,15 +97,15 @@ async def show_profile(msg: types.Message):
 
 @dp.message.register(Text(text="⭐️ Покупка звёзд"))
 async def buy_stars(msg: types.Message):
-    kb = types.InlineKeyboardMarkup(inline_keyboard=[
+    kb = types.InlineKeyboardMarkup(inline_keyboard=[ 
         [
             types.InlineKeyboardButton(text="50 ⭐️ за 80₽",  callback_data="buy_50"),
             types.InlineKeyboardButton(text="100 ⭐️ за 160₽", callback_data="buy_100")
-        ],
+        ], 
         [
             types.InlineKeyboardButton(text="150 ⭐️ за 240₽", callback_data="buy_150"),
             types.InlineKeyboardButton(text="200 ⭐️ за 320₽", callback_data="buy_200")
-        ],
+        ], 
         [ types.InlineKeyboardButton(text="Выбрать своё количество", callback_data="buy_custom") ],
     ])
     await msg.answer("Выбери пакет звёзд:", reply_markup=kb)
@@ -213,28 +207,20 @@ async def receive_tag(msg: types.Message, state: FSMContext):
     if not tag.isalnum():
         return await msg.answer("Неверный формат.")
     data = await state.get_data()
-    amt, cost = data["amount"], data["cost"]
-    # проверка Fragment
-    async with aiohttp.ClientSession() as sess:
-        r = await sess.get(f"{FRAGMENT_BASE}/users/{tag}",
-                           headers={"Authorization":f"Bearer {FRAGMENT_API_KEY}"})
-        if r.status != 200:
-            return await msg.answer("Тег не найден.")
-    # отправка
-    async with aiohttp.ClientSession() as sess:
-        r = await sess.post(f"{FRAGMENT_BASE}/stars/send",
-                            json={"receiver":f"@{tag}","amount":amt},
-                            headers={"Authorization":f"Bearer {FRAGMENT_API_KEY}"})
-        if r.status != 200:
-            return await msg.answer("Ошибка отправки.")
-    uid = str(msg.from_user.id)
-    user_balances[uid]  = user_balances.get(uid,0) + amt
-    st = user_stats.setdefault(uid, {"total_stars":0,"total_spent":0.0})
-    st["total_stars"]  += amt
-    st["total_spent"]  += cost
-    save_data()
-    await msg.answer(f"⭐️ @{tag} получил {amt} звёзд!")
-    await state.clear()
+    amt  = data["amount"]
+    cost = data["cost"]
+    # отправка звёзд
+    res = await send_stars(tag, amt)
+    if res:
+        await msg.answer(f"Звезды отправлены на @{tag}.")
+        await state.clear()
+    else:
+        await msg.answer("Тег не найден.")
+        await state.clear()
+
+async def send_stars(tag: str, amt: int):
+    # здесь логика для проверки существования тега через Fragment API и отправки звёзд
+    pass
 
 # --- WEBHOOK + SERVER ---
 async def on_startup(app: web.Application):
