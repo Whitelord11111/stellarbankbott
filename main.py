@@ -263,31 +263,42 @@ async def receive_tag(message: Message, state: FSMContext):
     await state.clear()
 
 # --- WEBHOOK ---
+
+from aiohttp import web
+
 async def on_startup(bot: Bot):
     await bot.set_webhook(WEBHOOK_URL)
-    asyncio.create_task(auto_save())
-    logger.info("запуск и webhook установлен")
+    asyncio.create_task(auto_save())  # если у тебя есть функция auto_save
+    logger.info(f"Webhook установлен: {WEBHOOK_URL}")
 
 async def on_shutdown(bot: Bot):
     await bot.delete_webhook()
-    logger.info("webhook удалён")
+    logger.info("Webhook удалён")
 
-async def webhook_handler(request):
-    body = await request.read()
-    update = await bot.parse_update(body)
-    await dp.feed_update(bot, update)
-    return web.Response()
+async def webhook_handler(request: web.Request):
+    try:
+        body = await request.read()
+        update = Update.model_validate_json(body.decode("utf-8"))
+        await dp.feed_update(bot, update)
+    except Exception as e:
+        logger.exception(f"Ошибка при обработке webhook: {e}")
+    return web.Response(status=200)
 
 async def main():
-    app = web.Application()
-    app.router.add_post(WEBHOOK_PATH, webhook_handler)
+    # регистрация старта и остановки
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
+
+    # aiohttp сервер
+    app = web.Application()
+    app.router.add_post(WEBHOOK_PATH, webhook_handler)
+
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, host="0.0.0.0", port=PORT)
     await site.start()
-    logger.info(f"сервер слушает на порту {PORT}")
+
+    logger.info(f"Сервер запущен и слушает порт {PORT}")
     while True:
         await asyncio.sleep(3600)
 
