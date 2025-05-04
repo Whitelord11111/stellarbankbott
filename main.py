@@ -10,6 +10,7 @@ from aiogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton,
     ReplyKeyboardMarkup, KeyboardButton
 )
+from aiogram.types import Update
 from aiogram.filters import Command
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
@@ -280,9 +281,11 @@ async def webhook_handler(request: web.Request):
         body = await request.read()
         update = Update.model_validate_json(body.decode("utf-8"))
         await dp.feed_update(bot, update)
+        return web.Response(text="ok")
     except Exception as e:
-        logger.exception(f"Ошибка при обработке webhook: {e}")
-    return web.Response(status=200)
+        logger.exception("Ошибка при обработке вебхука:")
+        return web.Response(status=500, text="error")
+
 
 async def main():
     # регистрация старта и остановки
@@ -303,4 +306,17 @@ async def main():
         await asyncio.sleep(3600)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    app = web.Application()
+    app.router.add_post(WEBHOOK_PATH, webhook_handler)
+
+    async def on_startup_wrapper(app):
+        await on_startup(bot)
+
+    async def on_shutdown_wrapper(app):
+        await on_shutdown(bot)
+
+    app.on_startup.append(on_startup_wrapper)
+    app.on_shutdown.append(on_shutdown_wrapper)
+
+    web.run_app(app, port=PORT)
+
