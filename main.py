@@ -16,16 +16,20 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 
 # --- CONFIG ---
-TOKEN = os.getenv("7391952562:AAHEVkEAqvyEc5YYwQZowaQVOoXYqDCKcC4")
-CRYPTOBOT_TOKEN = os.getenv("378343:AA836haaZrzZYInSBc1fXlm9HcgQsz4ChrS")
-FRAGMENT_API_KEY = os.getenv("c32ec465-5d81-4ca0-84d9-df6840773859")
+TOKEN = os.getenv("TOKEN")
+CRYPTOBOT_TOKEN = os.getenv("CRYPTOBOT_TOKEN")
+FRAGMENT_API_KEY = os.getenv("FRAGMENT_API_KEY")
+
 FRAGMENT_BASE = "https://fragmentapi.com/api"
 CRYPTOBOT_API = "https://pay.crypt.bot/api"
 DATA_FILE = "data.json"
+
 WEBHOOK_PATH = f"/webhook/{TOKEN}"
 WEBHOOK_HOST = "https://stellarbankbot.onrender.com"
 WEBHOOK_URL = WEBHOOK_HOST + WEBHOOK_PATH
+
 PORT = int(os.getenv("PORT", "8080"))
+
 
 # --- LOGGING ---
 logging.basicConfig(level=logging.INFO)
