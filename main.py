@@ -7,8 +7,7 @@ import aiohttp
 from aiohttp import web
 
 from aiogram import Bot, Dispatcher, types
-from aiogram.filters import CommandStart
-from aiogram.filters.text import Text
+from aiogram.filters import CommandStart, Text
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
@@ -68,7 +67,7 @@ async def auto_save():
     while True:
         try:
             save_data()
-        except:
+        except Exception:
             logger.exception("Ошибка автосейва")
         await asyncio.sleep(10)
 
@@ -80,17 +79,19 @@ class BuyStars(StatesGroup):
     waiting_for_tag   = State()
 
 # --- ХЕНДЛЕРЫ ---
-
 @dp.message.register(CommandStart())
 async def cmd_start(message: types.Message):
     uid = str(message.from_user.id)
     user_balances.setdefault(uid, 0)
     user_stats.setdefault(uid, {"total_stars": 0, "total_spent": 0.0})
 
-    kb = types.ReplyKeyboardMarkup(resize_keyboard=True).add(
-        types.KeyboardButton("👛 Баланс"),
-        types.KeyboardButton("👤 Профиль"),
-        types.KeyboardButton("⭐️ Покупка звёзд")
+    kb = (
+        types.ReplyKeyboardMarkup(resize_keyboard=True)
+        .add(
+            types.KeyboardButton(text="👛 Баланс"),
+            types.KeyboardButton(text="👤 Профиль"),
+            types.KeyboardButton(text="⭐️ Покупка звёзд")
+        )
     )
     await message.answer("Привет! Я бот для покупки звёзд ⭐️", reply_markup=kb)
 
@@ -121,7 +122,9 @@ async def buy_stars(message: types.Message):
             types.InlineKeyboardButton(text="150 ⭐️ за 240₽", callback_data="buy_150"),
             types.InlineKeyboardButton(text="200 ⭐️ за 320₽", callback_data="buy_200")
         ],
-        [ types.InlineKeyboardButton(text="Выбрать своё количество", callback_data="buy_custom") ],
+        [
+            types.InlineKeyboardButton(text="Выбрать своё количество", callback_data="buy_custom")
+        ],
     ])
     await message.answer("Выбери пакет звёзд:", reply_markup=kb)
 
@@ -136,7 +139,7 @@ async def handle_buy_package(call: types.CallbackQuery, state: FSMContext):
         amount = int(pkg)
         cost   = amount * 1.6
         await state.update_data(amount=amount, cost=cost)
-        kb = types.InlineKeyboardMarkup(inline_keyboard=[[
+        kb = types.InlineKeyboardMarkup(inline_keyboard=[[ 
             types.InlineKeyboardButton(text="✅ Да", callback_data="confirm_yes"),
             types.InlineKeyboardButton(text="❌ Нет", callback_data="confirm_no")
         ]])
@@ -153,7 +156,7 @@ async def input_custom_amount(message: types.Message, state: FSMContext):
         return await message.answer("Число должно быть от 50 до 1 000 000.")
     cost = amt * 1.6
     await state.update_data(amount=amt, cost=cost)
-    kb = types.InlineKeyboardMarkup(inline_keyboard=[[
+    kb = types.InlineKeyboardMarkup(inline_keyboard=[[ 
         types.InlineKeyboardButton(text="✅ Да", callback_data="confirm_yes"),
         types.InlineKeyboardButton(text="❌ Нет", callback_data="confirm_no")
     ]])
@@ -163,10 +166,10 @@ async def input_custom_amount(message: types.Message, state: FSMContext):
 @dp.callback_query.register(BuyStars.confirm_purchase, lambda c: c.data=="confirm_yes")
 async def payment_method(call: types.CallbackQuery, state: FSMContext):
     await call.answer()
-    kb = types.InlineKeyboardMarkup(inline_keyboard=[[
+    kb = types.InlineKeyboardMarkup(inline_keyboard=[[ 
         types.InlineKeyboardButton(text="TON",  callback_data="crypto_TON"),
         types.InlineKeyboardButton(text="USDT", callback_data="crypto_USDT"),
-        types.InlineKeyboardButton(text="BTC",  callback_data="crypto_BTC"),
+        types.InlineKeyboardButton(text="BTC",  callback_data="crypto_BTC")
     ]])
     await call.message.answer("Выбери криптовалюту для оплаты:", reply_markup=kb)
     await state.set_state(BuyStars.choose_crypto)
@@ -204,7 +207,6 @@ async def create_invoice(call: types.CallbackQuery, state: FSMContext):
     pay_url = invoice.bot_invoice_url or invoice.url
     await call.message.answer(f"🔗 Оплати здесь: {pay_url}")
 
-# --- CryptoBot‑webhook: ловим факт оплаты ---
 @crypto.pay_handler()
 async def invoice_paid(update, app):
     if update.payload.status != "paid":
@@ -217,7 +219,7 @@ async def invoice_paid(update, app):
         logger.error("Невалидный payload: %s", pl)
         return
     await bot.send_message(chat_id, "✅ Оплата получена! Введите Telegram‑тег (без @):")
-    state = dp.current_state(chat=chat_id)
+    state = dp.current_state(chat=chat_id, user=chat_id)
     await state.set_state(BuyStars.waiting_for_tag)
     await state.update_data(amount=int(amt_str), cost=float(cost_str))
 
@@ -235,7 +237,7 @@ async def receive_tag(message: types.Message, state: FSMContext):
         async with sess.get(f"{FRAGMENT_BASE}/users/{tag}", headers=headers) as resp:
             if resp.status != 200:
                 return await message.answer("⚠️ Тег не найден в Fragment.")
-    # Шлём звёзды
+    # Отправляем звёзды
     async with aiohttp.ClientSession() as sess:
         async with sess.post(
             f"{FRAGMENT_BASE}/stars/send",
@@ -244,7 +246,6 @@ async def receive_tag(message: types.Message, state: FSMContext):
         ) as resp:
             if resp.status != 200:
                 return await message.answer("❌ Ошибка при отправке звёзд.")
-    # Обновляем
     uid = str(message.from_user.id)
     user_balances[uid] = user_balances.get(uid,0) + amt
     stats = user_stats.setdefault(uid, {"total_stars":0,"total_spent":0.0})
@@ -254,9 +255,7 @@ async def receive_tag(message: types.Message, state: FSMContext):
     await message.answer(f"⭐️ @{tag} получил {amt} звёзд!")
     await state.clear()
 
-
 # --- WEBHOOK + SERVER ---
-
 async def on_startup(app: web.Application):
     await bot.set_webhook(WEBHOOK_URL, allowed_updates=["message","callback_query"])
     asyncio.create_task(auto_save())
