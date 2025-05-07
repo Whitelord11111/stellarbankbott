@@ -9,4 +9,4 @@ class Config:
     CRYPTOBOT_TOKEN = os.getenv("CRYPTOBOT_TOKEN")
     WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://yourdomain.com/webhook")
     WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "your_secret_key")
-    STAR_PRICE_RUB = 100  # Цена одной звезды в рублях
+    STAR_PRICE_RUB = 1.6  # Цена одной звезды в рублях
