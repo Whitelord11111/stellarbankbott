@@ -3,22 +3,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Telegram
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-
-# Webhook
-WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")
-WEBHOOK_PATH = os.getenv("WEBHOOK_PATH", "/webhook")
-WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
-
-# CryptoBot
-CRYPTOBOT_TOKEN = os.getenv("CRYPTOBOT_TOKEN")
-CRYPTO_PATH = os.getenv("CRYPTO_PATH", "/crypto")
-CRYPTO_WEBHOOK_URL = f"{WEBHOOK_HOST}{CRYPTO_PATH}"
-
-# Fragment
-FRAGMENT_API_KEY = os.getenv("FRAGMENT_API_KEY")
-
-# Server
-PORT = int(os.getenv("PORT", 8080))
-
+class Config:
+    TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+    FRAGMENT_API_KEY = os.getenv("FRAGMENT_API_KEY")
+    CRYPTOBOT_TOKEN = os.getenv("CRYPTOBOT_TOKEN")
+    WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://yourdomain.com/webhook")
+    WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "your_secret_key")
+    STAR_PRICE_RUB = 100  # Цена одной звезды в рублях
