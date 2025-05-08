@@ -13,6 +13,8 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     InlineKeyboardButton,
 )
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler
+from aiohttp import web
 import aiohttp
 import json
 from config import Config
@@ -284,20 +286,19 @@ async def process_tag(message: types.Message, state: FSMContext):
     await state.clear()
 
 # Вебхук для Crypto Pay
-@router.post("/webhook")
-async def crypto_webhook(request: types.Request):
-    body = await request.body()
+async def crypto_webhook(request: web.Request):
+    body = await request.text()
     signature = request.headers.get("Crypto-Pay-API-Signature")
     
     # Проверка подписи
     secret = Config.WEBHOOK_SECRET.encode()
-    expected_signature = hmac.new(secret, body, hashlib.sha256).hexdigest()
+    expected_signature = hmac.new(secret, body.encode(), hashlib.sha256).hexdigest()
     
     if signature != expected_signature:
-        return types.Response(status_code=403)
+        return web.Response(status=403)
     
     try:
-        data = await request.json()
+        data = json.loads(body)
         invoice = data.get("invoice")
         
         if invoice["status"] == "paid":
@@ -308,21 +309,44 @@ async def crypto_webhook(request: types.Request):
                 )
                 conn.commit()
                 
-        return types.Response(text="OK")
+        return web.Response(text="OK")
     
     except Exception as e:
         logger.error(f"Webhook error: {str(e)}")
-        return types.Response(status_code=500)
+        return web.Response(status=500)
 
-# Запуск бота
+async def on_startup(dp: Dispatcher):
+    await bot.delete_webhook()
+    if Config.WEBHOOK_URL:
+        await bot.set_webhook(
+            url=Config.WEBHOOK_URL,
+            secret_token=Config.WEBHOOK_SECRET
+        )
+
+async def on_shutdown(dp: Dispatcher):
+    await bot.delete_webhook()
+
 async def main():
-    await bot.delete_webhook(drop_pending_updates=True)
-    
     dp = Dispatcher()
     dp.include_router(router)
     
-    logger.info("Starting bot...")
-    await dp.start_polling(bot)
+    # Настройка вебхука
+    if Config.WEBHOOK_URL:
+        app = web.Application()
+        app.router.add_post("/webhook", crypto_webhook)
+        SimpleRequestHandler(dp, bot).register(app, path="/")
+        
+        # Запуск веб-сервера
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, host="0.0.0.0", port=10000)
+        await site.start()
+        logger.info("Webhook server started")
+        
+        # Запуск бота
+        await dp.start_polling(bot)
+    else:
+        await dp.start_polling(bot)
 
 if __name__ == "__main__":
     import asyncio
