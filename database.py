@@ -30,18 +30,18 @@ def init_db():
             )
         """)
         
-        # Создание таблицы транзакций
-        cursor.execute("""
+# Измените схему таблицы transactions
+        cursor.execute('''
             CREATE TABLE IF NOT EXISTS transactions (
                 tx_id TEXT PRIMARY KEY,
-                user_id INTEGER REFERENCES users(user_id),
-                stars INTEGER NOT NULL,
-                amount_rub REAL NOT NULL,
-                recipient_tag TEXT NOT NULL,
+                user_id INTEGER,
+                stars INTEGER,
+                amount_rub REAL,
+                recipient_tag TEXT DEFAULT '',  # Разрешены пустые значения
                 invoice_id TEXT UNIQUE NOT NULL,
                 status TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
             )
-        """)
+        ''')
         
         conn.commit()
