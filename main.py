@@ -2,6 +2,7 @@ import logging
 import uuid
 import hmac
 import hashlib
+import json
 from aiogram import Bot, Dispatcher, Router, types, F
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
@@ -16,7 +17,6 @@ from aiogram.types import (
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler
 from aiohttp import web
 import aiohttp
-import json
 from config import Config
 from database import db_connection, init_db
 
@@ -76,20 +76,30 @@ async def crypto_api_request(method: str, endpoint: str, data: dict = None) -> d
     url = f"{Config.CRYPTO_API_URL}/{endpoint}"
     headers = {"Crypto-Pay-API-Token": Config.CRYPTOBOT_TOKEN}
     
-    async with aiohttp.ClientSession() as session:
-        async with session.request(method, url, json=data, headers=headers) as resp:
-            return await resp.json()
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.request(method, url, json=data, headers=headers) as resp:
+                response = await resp.json()
+                logger.debug(f"API Response: {json.dumps(response, indent=2)}")
+                return response
+    except Exception as e:
+        logger.error(f"API Request Failed: {str(e)}")
+        return {"ok": False, "error": str(e)}
 
 # Хендлеры
 @router.message(Command("start"))
 async def start(message: types.Message):
-    with db_connection() as conn:
-        conn.execute(
-            "INSERT OR IGNORE INTO users (user_id, username) VALUES (?, ?)",
-            (message.from_user.id, message.from_user.username)
-        )
-        conn.commit()
-    await message.answer("🚀 Добро пожаловать в StellarBankBot!", reply_markup=main_menu())
+    try:
+        with db_connection() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO users (user_id, username) VALUES (?, ?)",
+                (message.from_user.id, message.from_user.username)
+            )
+            conn.commit()
+        await message.answer("🚀 Добро пожаловать в StellarBankBot!", reply_markup=main_menu())
+    except Exception as e:
+        logger.error(f"Database Error: {str(e)}")
+        await message.answer("❌ Произошла внутренняя ошибка. Попробуйте позже.")
 
 @router.message(F.text == "⭐️ Покупка звёзд")
 async def buy_stars(message: types.Message):
@@ -102,34 +112,38 @@ async def buy_stars(message: types.Message):
 
 @router.callback_query(F.data.startswith("buy_"))
 async def handle_package(call: types.CallbackQuery, state: FSMContext):
-    action = call.data.split("_")[1]
-    
-    if action == "custom":
-        await call.message.answer("🔢 Введите количество звёзд (50-1000):")
-        await state.set_state(PurchaseStates.input_custom)
-    else:
-        amount = int(action)
-        cost = amount * 1.6  # 1.6 руб/звезда
-        await state.update_data(amount=amount, cost=cost)
+    try:
+        action = call.data.split("_")[1]
         
-        confirm_kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Подтвердить", callback_data="confirm_yes"),
-             InlineKeyboardButton(text="❌ Отменить", callback_data="confirm_no")]
-        ])
-        await call.message.answer(
-            f"🛒 Подтвердите покупку:\n"
-            f"• Звёзды: {amount} ⭐️\n"
-            f"• Сумма: {cost:.2f}₽",
-            reply_markup=confirm_kb
-        )
-        await state.set_state(PurchaseStates.confirm_purchase)
+        if action == "custom":
+            await call.message.answer("🔢 Введите количество звёзд (50-1000):")
+            await state.set_state(PurchaseStates.input_custom)
+        else:
+            amount = int(action)
+            cost = amount * Config.STAR_PRICE_RUB
+            await state.update_data(amount=amount, cost=cost)
+            
+            confirm_kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✅ Подтвердить", callback_data="confirm_yes"),
+                 InlineKeyboardButton(text="❌ Отменить", callback_data="confirm_no")]
+            ])
+            await call.message.answer(
+                f"🛒 Подтвердите покупку:\n"
+                f"• Звёзды: {amount} ⭐️\n"
+                f"• Сумма: {cost:.2f}₽",
+                reply_markup=confirm_kb
+            )
+            await state.set_state(PurchaseStates.confirm_purchase)
+    except Exception as e:
+        logger.error(f"Package Handling Error: {str(e)}")
+        await call.message.answer("❌ Произошла ошибка. Попробуйте снова.")
 
 @router.message(PurchaseStates.input_custom)
 async def process_custom_input(message: types.Message, state: FSMContext):
     try:
         amount = int(message.text)
         if 50 <= amount <= 1000000:
-            cost = amount * 1.6
+            cost = amount * Config.STAR_PRICE_RUB
             await state.update_data(amount=amount, cost=cost)
             
             confirm_kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -147,34 +161,53 @@ async def process_custom_input(message: types.Message, state: FSMContext):
             await message.answer("❌ Введите число от 50 до 1 000 000!")
     except ValueError:
         await message.answer("❌ Некорректный ввод!")
+    except Exception as e:
+        logger.error(f"Custom Input Error: {str(e)}")
+        await message.answer("❌ Произошла ошибка. Попробуйте снова.")
 
 @router.callback_query(PurchaseStates.confirm_purchase, F.data == "confirm_yes")
 async def confirm_purchase(call: types.CallbackQuery, state: FSMContext):
-    await call.message.answer("💵 Выберите валюту:", reply_markup=currency_menu())
-    await state.set_state(PurchaseStates.select_currency)
+    try:
+        await call.message.answer("💵 Выберите валюту:", reply_markup=currency_menu())
+        await state.set_state(PurchaseStates.select_currency)
+    except Exception as e:
+        logger.error(f"Confirmation Error: {str(e)}")
+        await call.message.answer("❌ Произошла ошибка. Попробуйте снова.")
 
 @router.message(PurchaseStates.select_currency, F.text.in_(["TON", "BTC", "USDT"]))
 async def process_currency(message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    asset = message.text
-    
     try:
+        data = await state.get_data()
+        asset = message.text
+        
         # Получение курса
         rates = await crypto_api_request("GET", "getExchangeRates")
-        rate = next(r["rate"] for r in rates["result"] if r["source"] == asset)
+        if not rates.get("ok"):
+            raise ValueError("Ошибка получения курсов валют")
         
-        # Расчет стоимости
+        rate = next(
+            (float(r["rate"]) for r in rates["result"] 
+             if r["source"] == asset and r["target"] == "RUB"),
+            None
+        )
+        if not rate:
+            raise ValueError(f"Курс для {asset}/RUB не найден")
+        
         total_rub = data["cost"]
         total_crypto = total_rub / rate
         
         # Создание инвойса
         invoice = await crypto_api_request(
             "POST", "createInvoice",
-            {"asset": asset, "amount": total_crypto, "description": "Покупка звёзд"}
+            {
+                "asset": asset,
+                "amount": f"{total_crypto:.8f}",
+                "description": f"Покупка {data['amount']} звезд"
+            }
         )
         
         if not invoice.get("ok"):
-            raise ValueError("Ошибка создания счета")
+            raise ValueError(f"Ошибка API: {invoice.get('description')}")
         
         invoice_data = invoice["result"]
         pay_kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -185,7 +218,8 @@ async def process_currency(message: types.Message, state: FSMContext):
         await message.answer(
             f"📄 Счет на оплату:\n"
             f"• Сумма: {total_crypto:.8f} {asset}\n"
-            f"• RUB: {total_rub:.2f}₽",
+            f"• RUB: {total_rub:.2f}₽\n"
+            f"• Звезд: {data['amount']}",
             reply_markup=pay_kb
         )
         
@@ -204,16 +238,19 @@ async def process_currency(message: types.Message, state: FSMContext):
         await state.set_state(PurchaseStates.payment_waiting)
         
     except Exception as e:
-        logger.error(f"Ошибка: {str(e)}")
-        await message.answer("❌ Ошибка при создании счета!")
+        logger.error(f"Currency Processing Error: {str(e)}", exc_info=True)
+        await message.answer("❌ Ошибка при создании счета. Попробуйте позже.")
         await state.clear()
 
 @router.callback_query(F.data.startswith("check_"))
 async def check_payment(call: types.CallbackQuery, state: FSMContext):
-    invoice_id = call.data.split("_")[1]
-    
     try:
+        invoice_id = call.data.split("_")[1]
+        
         response = await crypto_api_request("GET", f"getInvoices?invoice_ids={invoice_id}")
+        if not response.get("ok"):
+            raise ValueError("Ошибка проверки статуса")
+        
         invoice = response["result"]["items"][0]
         
         if invoice["status"] == "paid":
@@ -224,16 +261,16 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
             await call.answer("❌ Оплата не получена!", show_alert=True)
             
     except Exception as e:
-        logger.error(f"Ошибка проверки оплаты: {str(e)}")
+        logger.error(f"Payment Check Error: {str(e)}")
         await call.answer("⚠️ Ошибка проверки статуса", show_alert=True)
 
 @router.message(PurchaseStates.enter_telegram_tag)
 async def process_tag(message: types.Message, state: FSMContext):
-    tag = message.text.lstrip("@")
-    data = await state.get_data()
-    
     try:
-        # Проверка тега через Fragment API
+        tag = message.text.lstrip("@")
+        data = await state.get_data()
+        
+        # Проверка тега
         async with aiohttp.ClientSession() as session:
             async with session.get(
                 f"https://fragment-api.com/verify?tag={tag}",
@@ -241,7 +278,7 @@ async def process_tag(message: types.Message, state: FSMContext):
             ) as resp:
                 result = await resp.json()
                 if not result.get("valid"):
-                    raise ValueError("Тег не найден")
+                    raise ValueError("Неверный Telegram тег")
         
         # Покупка звезд
         async with session.post(
@@ -255,7 +292,6 @@ async def process_tag(message: types.Message, state: FSMContext):
         
         # Обновление данных
         with db_connection() as conn:
-            # Пользователь
             conn.execute(
                 """UPDATE users 
                 SET total_stars = total_stars + ?, 
@@ -263,7 +299,6 @@ async def process_tag(message: types.Message, state: FSMContext):
                 WHERE user_id = ?""",
                 (data["amount"], data["cost"], message.from_user.id)
             )
-            # Транзакция
             conn.execute(
                 """UPDATE transactions 
                 SET status = ?, recipient_tag = ? 
@@ -278,26 +313,25 @@ async def process_tag(message: types.Message, state: FSMContext):
         )
         
     except Exception as e:
-        logger.error(f"Ошибка: {str(e)}")
-        await message.answer("❌ Ошибка при обработке заказа!")
-        # Возврат средств
+        logger.error(f"Tag Processing Error: {str(e)}", exc_info=True)
+        await message.answer("❌ Ошибка при обработке заказа! Средства будут возвращены.")
         await crypto_api_request("POST", f"refund/{data['invoice_id']}")
     
     await state.clear()
 
-# Вебхук для Crypto Pay
+# Вебхук обработчик
 async def crypto_webhook(request: web.Request):
-    body = await request.text()
-    signature = request.headers.get("Crypto-Pay-API-Signature")
-    
-    # Проверка подписи
-    secret = Config.WEBHOOK_SECRET.encode()
-    expected_signature = hmac.new(secret, body.encode(), hashlib.sha256).hexdigest()
-    
-    if signature != expected_signature:
-        return web.Response(status=403)
-    
     try:
+        body = await request.text()
+        signature = request.headers.get("Crypto-Pay-API-Signature")
+        
+        # Проверка подписи
+        secret = Config.WEBHOOK_SECRET.encode()
+        expected_signature = hmac.new(secret, body.encode(), hashlib.sha256).hexdigest()
+        
+        if signature != expected_signature:
+            return web.Response(status=403)
+        
         data = json.loads(body)
         invoice = data.get("invoice")
         
@@ -308,51 +342,48 @@ async def crypto_webhook(request: web.Request):
                     ("paid", invoice["invoice_id"])
                 )
                 conn.commit()
-                
+        
         return web.Response(text="OK")
     
     except Exception as e:
-        logger.error(f"Webhook error: {str(e)}")
+        logger.error(f"Webhook Error: {str(e)}")
         return web.Response(status=500)
 
 async def on_startup(dp: Dispatcher):
-    await bot.delete_webhook()
+    await bot.delete_webhook(drop_pending_updates=True)
     if Config.WEBHOOK_URL:
         await bot.set_webhook(
             url=Config.WEBHOOK_URL,
             secret_token=Config.WEBHOOK_SECRET
         )
 
-async def on_shutdown(dp: Dispatcher):
-    await bot.delete_webhook()
-
 async def main():
     dp = Dispatcher()
     dp.include_router(router)
     
-    # Настройка вебхука
-    if Config.WEBHOOK_URL:
-        app = web.Application()
-        app.router.add_post("/webhook", crypto_webhook)
-        SimpleRequestHandler(dp, bot).register(app, path="/")
-        
-        # Запуск веб-сервера
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, host="0.0.0.0", port=10000)
+    # Настройка веб-сервера
+    app = web.Application()
+    app.router.add_post("/webhook", crypto_webhook)
+    SimpleRequestHandler(dp, bot).register(app, path="/")
+    
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, host="0.0.0.0", port=10000)
+    
+    try:
         await site.start()
-        logger.info("Webhook server started")
-        
-        # Запуск бота
+        logger.info("Сервер запущен на порту 10000")
         await dp.start_polling(bot)
-    else:
-        await dp.start_polling(bot)
+    finally:
+        await runner.cleanup()
 
 if __name__ == "__main__":
     import asyncio
     
-    # Валидация конфига
-    if not all([Config.TELEGRAM_TOKEN, Config.CRYPTOBOT_TOKEN]):
-        raise ValueError("Не заданы обязательные переменные окружения!")
+    # Валидация конфигурации
+    Config.validate()
     
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Бот остановлен")
