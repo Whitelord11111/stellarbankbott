@@ -1,5 +1,4 @@
 aiogram==3.0.0b7
-aiocryptopay==0.3.0  # Версия, совместимая с pydantic 1.x
 aiohttp>=3.8.0
 python-dotenv>=0.21.0
 python-dateutil>=2.8.0
