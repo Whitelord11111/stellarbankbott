@@ -1,16 +1,21 @@
 import sqlite3
 from contextlib import contextmanager
+import logging
 
+logger = logging.getLogger(__name__)
 DATABASE_NAME = "stellarbot.db"
 
 @contextmanager
 def db_connection():
     conn = sqlite3.connect(DATABASE_NAME)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
     try:
         yield conn
+        conn.commit()
     except Exception as e:
         conn.rollback()
+        logger.error(f"Database error: {str(e)}")
         raise e
     finally:
         conn.close()
@@ -19,7 +24,7 @@ def init_db():
     with db_connection() as conn:
         cursor = conn.cursor()
         
-        # Создание таблицы пользователей
+        # Таблица пользователей
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
@@ -30,18 +35,16 @@ def init_db():
             )
         """)
         
-        # Создание таблицы транзакций
+        # Таблица транзакций (исправлено!)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS transactions (
                 tx_id TEXT PRIMARY KEY,
                 user_id INTEGER REFERENCES users(user_id),
                 stars INTEGER NOT NULL,
                 amount_rub REAL NOT NULL,
-                recipient_tag TEXT,
                 invoice_id TEXT UNIQUE NOT NULL,
                 status TEXT NOT NULL,
+                recipient_tag TEXT,  -- Разрешено NULL
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        
-        conn.commit()
