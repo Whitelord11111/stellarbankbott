@@ -26,7 +26,7 @@ bot = Bot(token=Config.TELEGRAM_TOKEN, parse_mode=ParseMode.HTML)
 session = aiohttp.ClientSession()
 
 # Состояния FSM
-class PurchaseStates(StarsGroup):
+class PurchaseStates(StatesGroup):
     select_package = State()
     confirm_purchase = State()
     input_custom = State()
