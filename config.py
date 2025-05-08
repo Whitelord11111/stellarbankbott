@@ -4,9 +4,25 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class Config:
-    TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]  # Используем строгую проверку
-    FRAGMENT_API_KEY = os.environ.get("FRAGMENT_API_KEY", "")
-    CRYPTOBOT_TOKEN = os.environ["CRYPTOBOT_TOKEN"]
-    WEBHOOK_SECRET = os.environ["WEBHOOK_SECRET"]
-    STAR_PRICE_RUB = 1.6
+    # Обязательные переменные
+    TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") or ""
+    CRYPTOBOT_TOKEN = os.getenv("CRYPTOBOT_TOKEN") or ""
+    
+    # Опциональные переменные
+    FRAGMENT_API_KEY = os.getenv("FRAGMENT_API_KEY", "")
+    WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
+    
+    # Настройки вебхука
+    WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://stellarbankbot.onrender.com/webhook")
     CRYPTO_API_URL = "https://pay.crypt.bot/api"
+    
+    # Цены
+    STAR_PRICE_RUB = 1.6  # 1.6 рубля за 1 звезду
+    
+    @classmethod
+    def validate(cls):
+        """Проверка обязательных настроек"""
+        if not cls.TELEGRAM_TOKEN:
+            raise ValueError("TELEGRAM_TOKEN не задан в .env")
+        if not cls.CRYPTOBOT_TOKEN:
+            raise ValueError("CRYPTOBOT_TOKEN не задан в .env")
