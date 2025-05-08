@@ -92,8 +92,11 @@ async def start(message: types.Message):
     try:
         with db_connection() as conn:
             conn.execute(
-                "INSERT OR IGNORE INTO users (user_id, username) VALUES (?, ?)",
-                (message.from_user.id, message.from_user.username)
+                """INSERT INTO transactions 
+                (tx_id, user_id, stars, amount_rub, invoice_id, status, recipient_tag)  # Добавьте recipient_tag
+                VALUES (?, ?, ?, ?, ?, ?, ?)""",  # Добавьте параметр
+                (str(uuid.uuid4()), message.from_user.id, data["amount"], 
+                total_rub, invoice_data["invoice_id"], "created", "pending")  # Укажите временное значение
             )
             conn.commit()
         await message.answer("🚀 Добро пожаловать в StellarBankBot!", reply_markup=main_menu())
