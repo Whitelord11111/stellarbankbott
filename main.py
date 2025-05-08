@@ -1,9 +1,11 @@
 import logging
 import uuid
+import hmac
+import hashlib
 from aiogram import Bot, Dispatcher, Router, types, F
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.state import State, StarsGroup
 from aiogram.enums import ParseMode
 from aiogram.types import (
     ReplyKeyboardMarkup,
@@ -12,30 +14,22 @@ from aiogram.types import (
     InlineKeyboardButton,
 )
 import aiohttp
-import aiocryptopay
 from config import Config
-from database import get_db, init_db
+from database import db_connection, init_db
 
-# Инициализация логирования
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.FileHandler("bot.log"), logging.StreamHandler()],
-)
-
+# Инициализация
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Инициализация компонентов
 router = Router()
 bot = Bot(token=Config.TELEGRAM_TOKEN, parse_mode=ParseMode.HTML)
-crypto = aiocryptopay.CryptoPay(Config.CRYPTOBOT_TOKEN)
-fragment_session = aiohttp.ClientSession(
-    headers={"Authorization": Config.FRAGMENT_API_KEY}
-)
+session = aiohttp.ClientSession()
 
 # Состояния FSM
-class PurchaseStates(StatesGroup):
-    select_quantity = State()
+class PurchaseStates(StarsGroup):
+    select_package = State()
+    confirm_purchase = State()
+    input_custom = State()
     select_currency = State()
     payment_waiting = State()
     enter_telegram_tag = State()
@@ -43,255 +37,225 @@ class PurchaseStates(StatesGroup):
 # Инициализация БД
 init_db()
 
+# Предустановленные пакеты
+STAR_PACKAGES = {
+    "50 ⭐️ за 80₽": 50,
+    "100 ⭐️ за 160₽": 100,
+    "150 ⭐️ за 240₽": 150,
+    "200 ⭐️ за 320₽": 200,
+    "250 ⭐️ за 400₽": 250
+}
+
 # Клавиатуры
 def main_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="🌟 Купить звезды"), KeyboardButton(text="💰 Баланс")],
-            [KeyboardButton(text="📊 Профиль")],
+            [KeyboardButton(text="👛 Баланс"), KeyboardButton(text="👤 Профиль")],
+            [KeyboardButton(text="⭐️ Покупка звёзд")]
         ],
-        resize_keyboard=True,
+        resize_keyboard=True
     )
 
 def currency_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="TON"), KeyboardButton(text="USDT")],
-            [KeyboardButton(text="BTC"), KeyboardButton(text="❌ Отмена")],
+            [KeyboardButton(text="BTC"), KeyboardButton(text="❌ Отмена")]
         ],
-        resize_keyboard=True,
+        resize_keyboard=True
     )
 
-# Вспомогательные функции
-async def get_crypto_rate(currency: str) -> float:
-    rates = await crypto.get_exchange_rates()
-    rate = next(
-        (r.rate for r in rates if r.source == currency and r.target == "RUB"), None
+# API функции
+async def crypto_api_request(method: str, endpoint: str, data: dict = None) -> dict:
+    url = f"{Config.CRYPTO_API_URL}/{endpoint}"
+    headers = {"Crypto-Pay-API-Token": Config.CRYPTOBOT_TOKEN}
+    async with session.request(method, url, json=data, headers=headers) as resp:
+        return await resp.json()
+
+async def create_invoice(asset: str, amount: float) -> dict:
+    return await crypto_api_request(
+        "POST", "createInvoice",
+        {"asset": asset, "amount": amount, "description": "Покупка звёзд"}
     )
-    if not rate:
-        raise ValueError(f"Курс для {currency} не найден")
-    return rate
-
-async def verify_telegram_tag(tag: str) -> bool:
-    try:
-        async with fragment_session.get(
-            f"https://fragment-api.com/verify?tag={tag}"
-        ) as resp:
-            data = await resp.json()
-            return data.get("valid", False)
-    except Exception as e:
-        logger.error(f"Ошибка проверки тега: {e}")
-        return False
-
-async def purchase_stars(quantity: int, tag: str) -> Dict:
-    try:
-        async with fragment_session.post(
-            "https://fragment-api.com/purchase",
-            json={"quantity": quantity, "recipient_tag": tag},
-        ) as resp:
-            return await resp.json()
-    except Exception as e:
-        logger.error(f"Ошибка покупки звезд: {e}")
-        return {"success": False}
-
-async def update_user_data(user_id: int, stars: int, amount: float):
-    with get_db() as conn:
-        cursor = conn.cursor()
-        # Обновляем пользователя
-        cursor.execute(
-            """INSERT OR IGNORE INTO users (user_id) VALUES (?)""", (user_id,)
-        )
-        cursor.execute(
-            """UPDATE users 
-            SET total_stars = total_stars + ?, 
-                total_spent = total_spent + ? 
-            WHERE user_id = ?""",
-            (stars, amount, user_id),
-        )
-        # Добавляем транзакцию
-        cursor.execute(
-            """INSERT INTO transactions 
-            (tx_id, user_id, stars, amount_rub, recipient_tag)
-            VALUES (?, ?, ?, ?, ?)""",
-            (str(uuid.uuid4()), user_id, stars, amount, tag),
-        )
-        conn.commit()
 
 # Хендлеры
 @router.message(Command("start"))
 async def start(message: types.Message):
+    with db_connection() as conn:
+        conn.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (message.from_user.id,))
+        conn.commit()
     await message.answer("🚀 Добро пожаловать в StellarBankBot!", reply_markup=main_menu())
 
-@router.message(F.text == "🌟 Купить звезды")
-async def start_purchase(message: types.Message, state: FSMContext):
-    await message.answer("🔢 Введите количество звезд (1-1000):", reply_markup=ReplyKeyboardRemove())
-    await state.set_state(PurchaseStates.select_quantity)
+@router.message(F.text == "⭐️ Покупка звёзд")
+async def buy_stars(message: types.Message):
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=name, callback_data=f"buy_{value}") 
+         for name, value in STAR_PACKAGES.items()],
+        [InlineKeyboardButton(text="Выбрать своё количество", callback_data="buy_custom")]
+    ])
+    await message.answer("Выбери пакет звёзд:", reply_markup=kb)
 
-@router.message(PurchaseStates.select_quantity)
-async def process_quantity(message: types.Message, state: FSMContext):
+@router.callback_query(F.data.startswith("buy_"))
+async def handle_package(call: types.CallbackQuery, state: FSMContext):
+    action = call.data.split("_")[1]
+    
+    if action == "custom":
+        await call.message.answer("Введите количество звёзд (50-1000):")
+        await state.set_state(PurchaseStates.input_custom)
+    else:
+        amount = int(action)
+        cost = amount * 1.6  # 1.6 руб/звезда
+        await state.update_data(amount=amount, cost=cost)
+        
+        confirm_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Да", callback_data="confirm_yes"),
+             InlineKeyboardButton(text="❌ Нет", callback_data="confirm_no")]
+        ])
+        await call.message.answer(
+            f"Подтвердите покупку {amount} звёзд за {cost}₽",
+            reply_markup=confirm_kb
+        )
+        await state.set_state(PurchaseStates.confirm_purchase)
+
+@router.message(PurchaseStates.input_custom)
+async def process_custom_input(message: types.Message, state: FSMContext):
     try:
-        quantity = int(message.text)
-        if 1 <= quantity <= 1000:
-            await state.update_data(quantity=quantity)
-            await message.answer("💵 Выберите валюту:", reply_markup=currency_menu())
-            await state.set_state(PurchaseStates.select_currency)
+        amount = int(message.text)
+        if 50 <= amount <= 1000000:
+            cost = amount * 1.6
+            await state.update_data(amount=amount, cost=cost)
+            
+            confirm_kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✅ Да", callback_data="confirm_yes"),
+                 InlineKeyboardButton(text="❌ Нет", callback_data="confirm_no")]
+            ])
+            await message.answer(
+                f"Подтвердите покупку {amount} звёзд за {cost}₽",
+                reply_markup=confirm_kb
+            )
+            await state.set_state(PurchaseStates.confirm_purchase)
         else:
-            await message.answer("❌ Введите число от 1 до 1000")
+            await message.answer("❌ Число должно быть от 50 до 1 000 000.")
     except ValueError:
-        await message.answer("❌ Некорректный ввод. Введите целое число")
+        await message.answer("❌ Введите корректное число.")
 
-@router.message(PurchaseStates.select_currency, F.text.in_(["TON", "USDT", "BTC"]))
+@router.callback_query(PurchaseStates.confirm_purchase, F.data == "confirm_yes")
+async def confirm_purchase(call: types.CallbackQuery, state: FSMContext):
+    await call.message.answer("💵 Выберите валюту:", reply_markup=currency_menu())
+    await state.set_state(PurchaseStates.select_currency)
+
+@router.message(PurchaseStates.select_currency, F.text.in_(["TON", "BTC", "USDT"]))
 async def process_currency(message: types.Message, state: FSMContext):
-    currency = message.text
     data = await state.get_data()
+    asset = message.text
     
     try:
-        rate = await get_crypto_rate(currency)
-        total_rub = data["quantity"] * Config.STAR_PRICE_RUB
+        rates = await crypto_api_request("GET", "getExchangeRates")
+        rate = next(r["rate"] for r in rates["result"] if r["source"] == asset)
+        
+        total_rub = data["cost"]
         total_crypto = total_rub / rate
         
-        invoice = await crypto.create_invoice(
-            asset=currency,
-            amount=total_crypto,
-            description=f"Покупка {data['quantity']} звезд",
-            paid_btn_name="openBot",
-            payload=f"{message.from_user.id}",
-        )
+        invoice = await create_invoice(asset, total_crypto)
+        invoice_data = invoice["result"]
         
-        pay_button = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="💳 Оплатить", url=invoice.pay_url)],
-                [InlineKeyboardButton(
-                    text="✅ Проверить оплату",
-                    callback_data=f"check_{invoice.invoice_id}"
-                )],
-            ]
-        )
+        pay_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💳 Оплатить", url=invoice_data["pay_url"])],
+            [InlineKeyboardButton(text="✅ Проверить оплату", callback_data=f"check_{invoice_data['invoice_id']}")]
+        ])
         
         await message.answer(
-            f"📄 *Счет на оплату*\n\n"
-            f"• Сумма: `{total_crypto:.8f} {currency}`\n"
-            f"• RUB: {total_rub}₽\n"
-            f"• Звезд: {data['quantity']}",
-            reply_markup=pay_button,
-            parse_mode=ParseMode.MARKDOWN,
+            f"📄 Счет на оплату:\n"
+            f"• Сумма: {total_crypto:.8f} {asset}\n"
+            f"• RUB: {total_rub:.2f}₽",
+            reply_markup=pay_kb
         )
-        await state.update_data(
-            invoice_id=invoice.invoice_id,
-            currency=currency,
-            total_rub=total_rub,
-        )
+        
+        with db_connection() as conn:
+            conn.execute(
+                """INSERT INTO transactions 
+                (tx_id, user_id, stars, amount_rub, invoice_id, status)
+                VALUES (?, ?, ?, ?, ?, ?)""",
+                (str(uuid.uuid4()), message.from_user.id, data["amount"], 
+                total_rub, invoice_data["invoice_id"], "created")
+            )
+            conn.commit()
+        
+        await state.update_data(invoice_id=invoice_data["invoice_id"])
         await state.set_state(PurchaseStates.payment_waiting)
+        
     except Exception as e:
-        logger.error(f"Ошибка создания счета: {e}")
-        await message.answer("❌ Ошибка при создании счета. Попробуйте позже.")
+        logger.error(f"Ошибка: {e}")
+        await message.answer("❌ Ошибка при создании счета")
         await state.clear()
 
 @router.callback_query(F.data.startswith("check_"))
-async def check_payment(callback: types.CallbackQuery, state: FSMContext):
-    invoice_id = callback.data.split("_")[1]
+async def check_payment(call: types.CallbackQuery, state: FSMContext):
+    invoice_id = call.data.split("_")[1]
     
     try:
-        invoice = await crypto.get_invoices(invoice_ids=invoice_id)
-        if invoice.status != "paid":
-            await callback.answer("❌ Оплата не получена", show_alert=True)
-            return
+        response = await crypto_api_request("GET", f"getInvoices?invoice_ids={invoice_id}")
+        invoice = response["result"]["items"][0]
         
-        await callback.message.edit_reply_markup()
-        await callback.message.answer("✅ Оплата подтверждена! Введите Telegram тег получателя (например, @username):")
-        await state.set_state(PurchaseStates.enter_telegram_tag)
+        if invoice["status"] == "paid":
+            await call.message.edit_reply_markup()
+            await call.message.answer("✅ Оплата подтверждена! Введите Telegram тег получателя:")
+            await state.set_state(PurchaseStates.enter_telegram_tag)
+        else:
+            await call.answer("❌ Оплата не получена", show_alert=True)
+            
     except Exception as e:
         logger.error(f"Ошибка проверки оплаты: {e}")
-        await callback.answer("⚠️ Ошибка проверки статуса", show_alert=True)
+        await call.answer("⚠️ Ошибка проверки статуса", show_alert=True)
 
 @router.message(PurchaseStates.enter_telegram_tag)
 async def process_tag(message: types.Message, state: FSMContext):
     tag = message.text.lstrip("@")
     data = await state.get_data()
     
-    if not await verify_telegram_tag(tag):
-        await message.answer("❌ Тег не найден. Введите корректный Telegram тег:")
-        return
+    if not await verify_telegram_tag(tag):  # Ваша функция проверки тега
+        return await message.answer("❌ Тег не найден. Повторите ввод:")
     
     try:
-        purchase_result = await purchase_stars(data["quantity"], tag)
-        if not purchase_result.get("success"):
-            raise ValueError(purchase_result.get("error", "Unknown error"))
+        # Вызов Fragment API для покупки звезд
+        async with session.post(
+            "https://fragment-api.com/purchase",
+            headers={"Authorization": Config.FRAGMENT_API_KEY},
+            json={"quantity": data["amount"], "recipient_tag": tag}
+        ) as resp:
+            result = await resp.json()
         
-        # Сохраняем данные
-        await update_user_data(
-            user_id=message.from_user.id,
-            stars=data["quantity"],
-            amount=data["total_rub"],
-        )
+        if result["success"]:
+            with db_connection() as conn:
+                conn.execute(
+                    """UPDATE users 
+                    SET total_stars = total_stars + ?, 
+                        total_spent = total_spent + ? 
+                    WHERE user_id = ?""",
+                    (data["amount"], data["cost"], message.from_user.id)
+                )
+                conn.execute(
+                    """UPDATE transactions 
+                    SET status = ?, recipient_tag = ? 
+                    WHERE invoice_id = ?""",
+                    ("completed", tag, data["invoice_id"])
+                )
+                conn.commit()
+            
+            await message.answer(f"🎉 Успешно! {data['amount']} звёзд переданы @{tag}")
+        else:
+            raise ValueError(result.get("error", "Ошибка API"))
         
-        await message.answer(
-            f"🎉 Успешная покупка!\n"
-            f"• Получено звезд: {data['quantity']}\n"
-            f"• Получатель: @{tag}\n"
-            f"• Сумма: {data['total_rub']}₽"
-        )
     except Exception as e:
-        logger.error(f"Ошибка покупки: {e}")
-        await message.answer("❌ Ошибка при обработке покупки. Средства будут возвращены.")
-        # Здесь должен быть код возврата средств через CryptoBot API
-    finally:
-        await state.clear()
-
-@router.message(F.text == "💰 Баланс")
-async def show_balance(message: types.Message):
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT total_stars, total_spent FROM users WHERE user_id = ?",
-            (message.from_user.id,),
-        )
-        result = cursor.fetchone()
-        
-    if result:
-        stars, spent = result
-        await message.answer(
-            f"📊 Ваш баланс:\n"
-            f"• Звезд: {stars} 🌟\n"
-            f"• Потрачено: {spent:.2f}₽"
-        )
-    else:
-        await message.answer("❌ У вас еще нет покупок")
-
-@router.message(F.text == "📊 Профиль")
-async def show_profile(message: types.Message):
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT username, total_stars, total_spent FROM users WHERE user_id = ?",
-            (message.from_user.id,),
-        )
-        result = cursor.fetchone()
-        
-    if result:
-        username, stars, spent = result
-        response = (
-            f"👤 Ваш профиль:\n"
-            f"• Тег: @{username or 'не указан'}\n"
-            f"• ID: {message.from_user.id}\n"
-            f"• Всего звезд: {stars} 🌟\n"
-            f"• Потрачено: {spent:.2f}₽"
-        )
-    else:
-        response = "❌ Профиль не найден"
+        logger.error(f"Ошибка: {e}")
+        await message.answer("❌ Ошибка при обработке заказа")
+        await crypto_api_request("POST", f"refund/{data['invoice_id']}")
     
-    await message.answer(response)
+    await state.clear()
 
 async def main():
     dp = Dispatcher()
     dp.include_router(router)
-    
-    # Настройка вебхука
-    await bot.set_webhook(
-        url=Config.WEBHOOK_URL,
-        secret_token=Config.WEBHOOK_SECRET,
-    )
-    
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
