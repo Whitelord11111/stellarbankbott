@@ -92,11 +92,8 @@ async def start(message: types.Message):
     try:
         with db_connection() as conn:
             conn.execute(
-                """INSERT INTO transactions 
-                (tx_id, user_id, stars, amount_rub, invoice_id, status, recipient_tag)  # Добавьте recipient_tag
-                VALUES (?, ?, ?, ?, ?, ?, ?)""",  # Добавьте параметр
-                (str(uuid.uuid4()), message.from_user.id, data["amount"], 
-                total_rub, invoice_data["invoice_id"], "created", "pending")  # Укажите временное значение
+                "INSERT OR IGNORE INTO users (user_id, username) VALUES (?, ?)",
+                (message.from_user.id, message.from_user.username)
             )
             conn.commit()
         await message.answer("🚀 Добро пожаловать в StellarBankBot!", reply_markup=main_menu())
@@ -107,8 +104,7 @@ async def start(message: types.Message):
 @router.message(F.text == "⭐️ Покупка звёзд")
 async def buy_stars(message: types.Message):
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=name, callback_data=f"buy_{value}") 
-         for name, value in STAR_PACKAGES.items()],
+        [InlineKeyboardButton(text=name, callback_data=f"buy_{value}") for name, value in STAR_PACKAGES.items()],
         [InlineKeyboardButton(text="Выбрать своё количество", callback_data="buy_custom")]
     ])
     await message.answer("🎁 Выберите пакет звёзд:", reply_markup=kb)
@@ -275,40 +271,42 @@ async def process_tag(message: types.Message, state: FSMContext):
         
         # Проверка тега через Fragment API
         async with aiohttp.ClientSession() as session:
-            # 1. Исправленный URL для проверки тега
+            # 1. Проверка тега
             async with session.get(
-                "https://api.fragment.com/api/check-tag",
-                params={"tag": tag},
-                headers={"Authorization": Config.FRAGMENT_API_KEY}
+                "https://api.fragment.com/username/check",
+                params={"username": tag},
+                headers={"Authorization": f"Bearer {Config.FRAGMENT_API_KEY}"}
             ) as resp:
-                # 2. Проверка content-type
-                content_type = resp.headers.get('Content-Type', '')
-                if 'application/json' not in content_type:
-                    text = await resp.text()
-                    raise ValueError(f"Fragment API вернул не JSON: {text}")
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    raise ValueError(f"Fragment API error: {error_text}")
                 
                 result = await resp.json()
-                if not result.get("valid"):
-                    raise ValueError("Тег не найден или невалиден")
+                if not result.get("ok") or not result["result"].get("valid"):
+                    raise ValueError("Тег невалиден")
 
-            # 3. Покупка звезд с обработкой ошибок
+            # 2. Покупка звезд
             async with session.post(
-                "https://api.fragment.com/api/purchase",
+                "https://api.fragment.com/purchase",
                 headers={
-                    "Authorization": Config.FRAGMENT_API_KEY,
+                    "Authorization": f"Bearer {Config.FRAGMENT_API_KEY}",
                     "Content-Type": "application/json"
                 },
                 json={
-                    "quantity": data["amount"],
-                    "recipient_tag": tag,
-                    "currency": "STARS"  # Добавьте если требуется
+                    "username": tag,
+                    "amount": data["amount"],
+                    "currency": "STARS"
                 }
             ) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    raise ValueError(f"Ошибка покупки: {error_text}")
+                
                 purchase_result = await resp.json()
-                if not purchase_result.get("success"):
-                    raise ValueError(purchase_result.get("message", "Ошибка покупки"))
+                if not purchase_result.get("ok"):
+                    raise ValueError(purchase_result.get("error", "Ошибка"))
 
-        # 4. Обновление транзакции
+        # 3. Обновление транзакции
         with db_connection() as conn:
             conn.execute(
                 """UPDATE transactions 
@@ -322,8 +320,9 @@ async def process_tag(message: types.Message, state: FSMContext):
 
     except Exception as e:
         logger.error(f"Ошибка: {str(e)}", exc_info=True)
-        # 5. Безопасный возврат средств
+        # Возврат средств
         if 'invoice_id' in data:
+            logger.info(f"Возврат средств для инвойса {data['invoice_id']}")
             await crypto_api_request("POST", f"refund/{data['invoice_id']}")
         await message.answer("❌ Ошибка отправки. Средства возвращены.")
     finally:
@@ -370,6 +369,7 @@ async def on_startup(dp: Dispatcher):
 async def main():
     dp = Dispatcher()
     dp.include_router(router)
+    dp.startup.register(on_startup)
     
     # Настройка веб-сервера
     app = web.Application()
@@ -378,11 +378,11 @@ async def main():
     
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, host="0.0.0.0", port=10000)
+    site = web.TCPSite(runner, host="0.0.0.0", port=int(Config.PORT))
     
     try:
         await site.start()
-        logger.info("Сервер запущен на порту 10000")
+        logger.info(f"Сервер запущен на порту {Config.PORT}")
         await dp.start_polling(bot)
     finally:
         await runner.cleanup()
