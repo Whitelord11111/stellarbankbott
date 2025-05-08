@@ -37,7 +37,7 @@ def init_db():
                 user_id INTEGER REFERENCES users(user_id),
                 stars INTEGER NOT NULL,
                 amount_rub REAL NOT NULL,
-                recipient_tag TEXT NOT NULL,
+                recipient_tag TEXT,
                 invoice_id TEXT UNIQUE NOT NULL,
                 status TEXT NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
