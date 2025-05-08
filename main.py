@@ -254,17 +254,26 @@ async def process_tag(message: types.Message, state: FSMContext):
     await state.clear()
 
 async def main():
-    dp = Dispatcher()
-    dp.include_router(router)
-    await dp.start_polling(bot)
+    # Удаление вебхука перед стартом
+    await bot.delete_webhook(drop_pending_updates=True)
+    
+    # Инициализация сессии HTTP-клиента
+    async with aiohttp.ClientSession() as session:
+        dp = Dispatcher()
+        dp.include_router(router)
+        
+        try:
+            # Запуск бота в режиме polling
+            await dp.start_polling(bot)
+        finally:
+            # Корректное закрытие сессии
+            await session.close()
 
 if __name__ == "__main__":
     import asyncio
     
-    # Проверка токенов перед запуском
+    # Проверка обязательных переменных
     if not Config.TELEGRAM_TOKEN:
-        raise ValueError("TELEGRAM_TOKEN не задан в .env")
-    if not Config.CRYPTOBOT_TOKEN:
-        raise ValueError("CRYPTOBOT_TOKEN не задан в .env")
+        raise ValueError("TELEGRAM_TOKEN не задан!")
     
     asyncio.run(main())
