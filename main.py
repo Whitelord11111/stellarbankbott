@@ -260,4 +260,11 @@ async def main():
 
 if __name__ == "__main__":
     import asyncio
+    
+    # Проверка токенов перед запуском
+    if not Config.TELEGRAM_TOKEN:
+        raise ValueError("TELEGRAM_TOKEN не задан в .env")
+    if not Config.CRYPTOBOT_TOKEN:
+        raise ValueError("CRYPTOBOT_TOKEN не задан в .env")
+    
     asyncio.run(main())
