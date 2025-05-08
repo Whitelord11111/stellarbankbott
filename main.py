@@ -73,17 +73,17 @@ def currency_menu() -> ReplyKeyboardMarkup:
 
 # Работа с Crypto Pay API
 async def crypto_api_request(method: str, endpoint: str, data: dict = None) -> dict:
-    url = f"{Config.CRYPTO_API_URL}/{endpoint}"
-    headers = {"Crypto-Pay-API-Token": Config.CRYPTOBOT_TOKEN}
-    
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.request(method, url, json=data, headers=headers) as resp:
-                response = await resp.json()
-                logger.debug(f"API Response: {json.dumps(response, indent=2)}")
-                return response
-    except Exception as e:
-        logger.error(f"API Request Failed: {str(e)}")
+            async with session.request(
+                method, 
+                f"{Config.CRYPTO_API_URL}/{endpoint}",
+                json=data,
+                headers={"Crypto-Pay-API-Token": Config.CRYPTOBOT_TOKEN}
+            ) as resp:
+                return await resp.json()
+    except aiohttp.ClientError as e:
+        logger.error(f"API Connection Error: {str(e)}")
         return {"ok": False, "error": str(e)}
 
 # Хендлеры
@@ -270,35 +270,43 @@ async def process_tag(message: types.Message, state: FSMContext):
         tag = message.text.lstrip("@")
         data = await state.get_data()
         
-        # Проверка тега
+        # Проверка тега через Fragment API
         async with aiohttp.ClientSession() as session:
+            # 1. Исправленный URL для проверки тега
             async with session.get(
-                f"https://fragment-api.com/verify?tag={tag}",
+                "https://api.fragment.com/api/check-tag",
+                params={"tag": tag},
                 headers={"Authorization": Config.FRAGMENT_API_KEY}
             ) as resp:
+                # 2. Проверка content-type
+                content_type = resp.headers.get('Content-Type', '')
+                if 'application/json' not in content_type:
+                    text = await resp.text()
+                    raise ValueError(f"Fragment API вернул не JSON: {text}")
+                
                 result = await resp.json()
                 if not result.get("valid"):
-                    raise ValueError("Неверный Telegram тег")
-        
-        # Покупка звезд
-        async with session.post(
-            "https://fragment-api.com/purchase",
-            headers={"Authorization": Config.FRAGMENT_API_KEY},
-            json={"quantity": data["amount"], "recipient_tag": tag}
-        ) as resp:
-            purchase_result = await resp.json()
-            if not purchase_result.get("success"):
-                raise ValueError(purchase_result.get("error", "Ошибка API"))
-        
-        # Обновление данных
+                    raise ValueError("Тег не найден или невалиден")
+
+            # 3. Покупка звезд с обработкой ошибок
+            async with session.post(
+                "https://api.fragment.com/api/purchase",
+                headers={
+                    "Authorization": Config.FRAGMENT_API_KEY,
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "quantity": data["amount"],
+                    "recipient_tag": tag,
+                    "currency": "STARS"  # Добавьте если требуется
+                }
+            ) as resp:
+                purchase_result = await resp.json()
+                if not purchase_result.get("success"):
+                    raise ValueError(purchase_result.get("message", "Ошибка покупки"))
+
+        # 4. Обновление транзакции
         with db_connection() as conn:
-            conn.execute(
-                """UPDATE users 
-                SET total_stars = total_stars + ?, 
-                    total_spent = total_spent + ? 
-                WHERE user_id = ?""",
-                (data["amount"], data["cost"], message.from_user.id)
-            )
             conn.execute(
                 """UPDATE transactions 
                 SET status = ?, recipient_tag = ? 
@@ -306,18 +314,17 @@ async def process_tag(message: types.Message, state: FSMContext):
                 ("completed", tag, data["invoice_id"])
             )
             conn.commit()
-        
-        await message.answer(
-            f"🎉 Успешно! {data['amount']} звёзд переданы @{tag}\n"
-            f"Сумма: {data['cost']:.2f}₽"
-        )
-        
+
+        await message.answer(f"🎉 Успешно! {data['amount']} звёзд отправлены @{tag}")
+
     except Exception as e:
-        logger.error(f"Tag Processing Error: {str(e)}", exc_info=True)
-        await message.answer("❌ Ошибка при обработке заказа! Средства будут возвращены.")
-        await crypto_api_request("POST", f"refund/{data['invoice_id']}")
-    
-    await state.clear()
+        logger.error(f"Ошибка: {str(e)}", exc_info=True)
+        # 5. Безопасный возврат средств
+        if 'invoice_id' in data:
+            await crypto_api_request("POST", f"refund/{data['invoice_id']}")
+        await message.answer("❌ Ошибка отправки. Средства возвращены.")
+    finally:
+        await state.clear()
 
 # Вебхук обработчик
 async def crypto_webhook(request: web.Request):
