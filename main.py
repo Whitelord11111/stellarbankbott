@@ -289,7 +289,7 @@ async def process_tag(message: types.Message, state: FSMContext):
             }
             headers = {
                 "Content-Type": "application/json",
-                "Authorization": f"Bearer {Config.FRAGMENT_API_KEY}"
+                "Authorization": f"Bearer {Config.FRAGMENT_KEY}"
             }
 
             async with session.post(
