@@ -22,7 +22,7 @@ services:
       - key: WEBHOOK_URL
         value: "https://stellarbankbot.onrender.com/webhook"
       - key: PORT
-        value: "8080"
+        value: "10000"
       - key: WEBHOOK_SECRET
         value: "2bb939812e843d9991ea70143cee221e"
       - key: PYTHONUNBUFFERED
