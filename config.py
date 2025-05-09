@@ -14,6 +14,7 @@ class Config:
     STAR_PRICE_RUB = 1.6
     PORT = int(os.getenv("PORT", 10000))
     FRAGMENT_API_URL = "https://api.fragment-api.com/v1/order/stars/"
+    FRAGMENT_KEY = os.getenv("FRAGMENT_KEY", "")
     
     @classmethod
     def validate(cls):
