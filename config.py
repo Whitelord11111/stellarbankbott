@@ -16,6 +16,6 @@ class Config:
     @classmethod
     def validate(cls):
         if not cls.TELEGRAM_TOKEN:
-            raise ValueError("BOT_TOKEN не задан в .env")
+            raise ValueError("TELEGRAM_TOKEN не задан в .env")
         if not cls.CRYPTOBOT_TOKEN:
             raise ValueError("CRYPTOBOT_TOKEN не задан")
