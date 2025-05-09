@@ -264,24 +264,19 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
         logger.error(f"Payment Check Error: {str(e)}")
         await call.answer("⚠️ Ошибка проверки статуса", show_alert=True)
 
+@router.message(PurchaseStates.enter_telegram_tag, F.text == "❌ Отмена")
+async def cancel_tag_input(message: types.Message, state: FSMContext):
+    await state.clear()
+    await message.answer("🚫 Операция отменена.", reply_markup=main_menu())
+
 @router.message(PurchaseStates.enter_telegram_tag)
 async def process_tag(message: types.Message, state: FSMContext):
     try:
-        tag = message.text.lstrip("@")  # Убираем @, если пользователь ввел
+        tag = message.text.lstrip("@")
         data = await state.get_data()
         
-        # Проверка валидности тега через Fragment API
         async with aiohttp.ClientSession() as session:
-            # 1. Проверка существования тега
-            try:
-                # Если Fragment требует отдельную проверку, добавьте здесь
-                # Если нет — проверяем через Telegram API
-                await bot.get_chat(f"@{tag}")
-            except Exception as e:
-                await message.answer("❌ Тег не существует или закрыт!")
-                raise
-
-            # 2. Покупка звезд через Fragment API
+            # 1. Пытаемся отправить звезды через Fragment API
             payload = {
                 "username": tag,
                 "quantity": data["amount"],
@@ -292,39 +287,52 @@ async def process_tag(message: types.Message, state: FSMContext):
                 "Authorization": f"Bearer {Config.FRAGMENT_KEY}"
             }
 
-            async with session.post(
-                Config.FRAGMENT_API_URL,
-                json=payload,
-                headers=headers
-            ) as resp:
-                if resp.status != 200:
-                    error_text = await resp.text()
-                    logger.error(f"Fragment API Error: {error_text}")
-                    raise ValueError("Ошибка покупки звезд")
+            try:
+                async with session.post(
+                    Config.FRAGMENT_API_URL,
+                    json=payload,
+                    headers=headers
+                ) as resp:
+                    # 2. Обработка ответа Fragment API
+                    if resp.status == 400:
+                        await message.answer(
+                            "❌ Тег не найден или невалиден!\n"
+                            "Повторите ввод или нажмите ❌ Отмена:"
+                        )
+                        return  # Остаемся в состоянии
 
-                result = await resp.json()
-                if not result.get("success", False):
-                    raise ValueError(result.get("message", "Unknown error"))
+                    if resp.status != 200:
+                        error_text = await resp.text()
+                        logger.error(f"Fragment API Error ({resp.status}): {error_text}")
+                        raise ValueError("Ошибка сервера Fragment")
 
-        # 3. Обновление транзакции
-        with db_connection() as conn:
-            conn.execute(
-                """UPDATE transactions 
-                SET status = ?, recipient_tag = ? 
-                WHERE invoice_id = ?""",
-                ("completed", tag, data["invoice_id"])
-            )
-            conn.commit()
+                    result = await resp.json()
+                    if not result.get("success", False):
+                        raise ValueError(result.get("message", "Unknown error"))
 
-        await message.answer(f"✅ Успешно! {data['amount']} звёзд отправлены @{tag}")
+            except aiohttp.ClientError as e:
+                logger.error(f"Connection Error: {str(e)}")
+                await message.answer("⚠️ Ошибка соединения с Fragment. Попробуйте позже.")
+                raise
+
+            # 3. Обновление транзакции при успехе
+            with db_connection() as conn:
+                conn.execute(
+                    """UPDATE transactions 
+                    SET status = ?, recipient_tag = ? 
+                    WHERE invoice_id = ?""",
+                    ("completed", tag, data["invoice_id"])
+                )
+                conn.commit()
+
+            await message.answer(f"🎉 Успешно! {data['amount']} звёзд отправлены @{tag}")
 
     except Exception as e:
         logger.error(f"Ошибка: {str(e)}", exc_info=True)
-        # Возврат средств
         if 'invoice_id' in data:
             logger.info(f"Возврат средств для инвойса {data['invoice_id']}")
             await crypto_api_request("POST", f"refund/{data['invoice_id']}")
-        await message.answer("❌ Ошибка отправки. Средства возвращены.")
+        await message.answer("❌ Критическая ошибка. Средства возвращены.")
     finally:
         await state.clear()
 
