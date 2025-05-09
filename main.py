@@ -233,6 +233,11 @@ async def process_currency(message: types.Message, state: FSMContext):
     await state.set_state(PurchaseStates.payment_waiting)
     await state.update_data(invoice_id=invoice_id)
 
+    except Exception as e:
+        logger.error(f"Currency process error: {str(e)}")
+        await message.answer("❌ Произошла ошибка при обработке запроса")
+        await state.clear()
+
 @router.callback_query(F.data.startswith("check_"))
 async def check_payment(call: types.CallbackQuery, state: FSMContext):
     invoice_id = call.data.split("_")[1]
