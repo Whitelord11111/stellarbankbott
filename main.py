@@ -86,7 +86,7 @@ async def crypto_api_request(method: str, endpoint: str, data: dict = None) -> d
         return {"ok": False, "error": str(e)}
 
 # ——— Handlers ——————————————————————————————————
-@router.message(commands=["start"])
+@router.message(Command(commands=["start"]))
 async def cmd_start(message: types.Message):
     try:
         with db_connection() as conn:
