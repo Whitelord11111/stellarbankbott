@@ -178,45 +178,38 @@ async def process_currency(message: types.Message, state: FSMContext):
     stars = data['stars']
     amount_rub = stars * Config.STAR_PRICE_RUB
     
-    rates = await crypto_api_request("GET", "exchange-rates")
-    if not rates or 'result' not in rates:
-        await message.answer("❌ Ошибка получения курсов валют")
-        await state.clear()
-        return
-    
-    currency_data = next(
-        (r for r in rates['result'] 
-         if r.get('source') == message.text and r.get('target') == 'RUB'),
-        None
-    )
-    
-    if not currency_data:
-        await message.answer("❌ Не удалось найти курс для выбранной валюты")
-        await state.clear()
-        return
-    
     try:
+        rates = await crypto_api_request("GET", "exchangeRates")
+        if not rates or not rates.get('result'):
+            raise ValueError("Invalid response from Crypto API")
+            
+        currency_data = next(
+            (r for r in rates['result'] 
+             if r.get('source') == message.text and r.get('target') == 'RUB'),
+            None
+        )
+        
+        if not currency_data:
+            raise ValueError("Currency not found")
+        
         currency_rate = float(currency_data['rate'])
         amount_crypto = round(amount_rub / currency_rate, 6)
-    except (KeyError, ValueError) as e:
-        logger.error(f"Currency error: {str(e)}")
-        await message.answer("❌ Ошибка расчёта суммы")
-        await state.clear()
-        return
-    
-    invoice_id = str(uuid.uuid4())
-    invoice = await crypto_api_request("POST", "create-invoice", {
-        "asset": message.text,
-        "amount": str(amount_crypto),
-        "description": f"Покупка {stars} звёзд",
-        "hidden_message": str(message.from_user.id),
-        "payload": invoice_id
-    })
-    
-    if not invoice or 'result' not in invoice:
-        await message.answer("❌ Ошибка создания платежа")
-        await state.clear()
-        return
+        
+        invoice_id = str(uuid.uuid4())
+        invoice = await crypto_api_request(
+            "POST", 
+            "createInvoice",
+            {
+                "asset": message.text,
+                "amount": str(amount_crypto),
+                "description": f"Покупка {stars} звёзд",
+                "hidden_message": str(message.from_user.id),
+                "payload": invoice_id
+            }
+        )
+        
+        if not invoice or not invoice.get('result'):
+            raise ValueError("Invoice creation failed")
     
     async with db.cursor() as cursor:
         await cursor.execute(
@@ -342,20 +335,43 @@ async def show_stats(message: types.Message):
         )
         global_stats = await cursor.fetchone()
 
-    response = "📈 Ваша статистика:\n"
-    if user_stats['orders']:
-        response += f"├ Заказов: {user_stats['orders']}\n"
-        response += f"└ Звёзд: {user_stats['stars']}\n\n"
-    else:
-        response += "└ Нет завершённых заказов\n\n"
-    
-    response += (
-        "🌐 Общая статистика:\n"
-        f"├ Всего звёзд: {global_stats['total_stars'] or 0}\n"
-        f"└ Общая выручка: {global_stats['total_spent'] or 0:.2f}₽"
-    )
-    
-    await message.answer(response)
+@router.message(F.text == "📊 Статистика")
+async def show_stats(message: types.Message):
+    try:
+        async with db.cursor() as cursor:
+            # Пользовательская статистика
+            await cursor.execute(
+                """SELECT COUNT(*) as orders, SUM(stars) as stars 
+                FROM transactions 
+                WHERE user_id = ? AND status = 'completed'""",
+                (message.from_user.id,)
+            )
+            user_stats = await cursor.fetchone()
+            
+            # Глобальная статистика
+            await cursor.execute(
+                "SELECT SUM(total_stars) as total_stars, SUM(total_spent) as total_spent FROM users"
+            )
+            global_stats = await cursor.fetchone()
+
+        response = "📈 Ваша статистика:\n"
+        if user_stats and user_stats['orders'] > 0:
+            response += f"├ Заказов: {user_stats['orders']}\n"
+            response += f"└ Звёзд: {user_stats['stars'] or 0}\n\n"
+        else:
+            response += "└ Нет завершённых заказов\n\n"
+        
+        response += (
+            "🌐 Общая статистика:\n"
+            f"├ Всего звёзд: {global_stats['total_stars'] or 0}\n"
+            f"└ Общая выручка: {global_stats['total_spent'] or 0:.2f}₽"
+        )
+        
+        await message.answer(response)
+        
+    except Exception as e:
+        logger.error(f"Stats error: {str(e)}")
+        await message.answer("❌ Ошибка получения статистики")
 
 # Вебхуки
 async def telegram_webhook(request: web.Request):
