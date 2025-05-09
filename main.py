@@ -28,8 +28,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-router = Router()
 bot = Bot(token=Config.TELEGRAM_TOKEN, parse_mode=ParseMode.HTML)
+dp = Dispatcher()
+router = Router()
 
 # Состояния FSM
 class PurchaseStates(StatesGroup):
@@ -376,26 +377,23 @@ async def on_startup():
     logger.info("Вебхук успешно установлен!")
 
 async def main():
-    dp = Dispatcher()
+    # Регистрация роутера
     dp.include_router(router)
     dp.startup.register(on_startup)
-    
+
     # Настройка веб-сервера
     app = web.Application()
-    app.router.add_post("/crypto_webhook", crypto_webhook)  # Для Crypto Pay
-    app.router.add_post("/webhook", telegram_webhook)       # Для Telegram
-    SimpleRequestHandler(dp, bot).register(app, path="/")
+    app.router.add_post("/webhook", telegram_webhook)
+    app.router.add_post("/crypto_webhook", crypto_webhook)
     
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, host="0.0.0.0", port=int(Config.PORT))  # 0.0.0.0 обязательно!
+    site = web.TCPSite(runner, host="0.0.0.0", port=int(Config.PORT))
     
     try:
         await site.start()
         logger.info(f"Сервер запущен на порту {Config.PORT}")
-        # Уберите строку с start_polling!
-        while True:
-            await asyncio.sleep(3600)  # Бесконечное ожидание для работы сервера
+        await asyncio.Future()  # Бесконечное ожидание
     finally:
         await runner.cleanup()
 
