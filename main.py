@@ -358,7 +358,7 @@ async def crypto_webhook(request: web.Request):
         logger.error(f"Webhook Error: {str(e)}")
         return web.Response(status=500)
 
-async def on_startup(dp: Dispatcher):
+async def on_startup():  # Исправленная сигнатура
     await bot.delete_webhook(drop_pending_updates=True)
     if Config.WEBHOOK_URL:
         await bot.set_webhook(
@@ -369,9 +369,8 @@ async def on_startup(dp: Dispatcher):
 async def main():
     dp = Dispatcher()
     dp.include_router(router)
-    dp.startup.register(on_startup)  # Добавьте эту строку!
+    dp.startup.register(on_startup)  # Корректная регистрация
     
-    # Настройка веб-сервера
     app = web.Application()
     app.router.add_post("/webhook", crypto_webhook)
     SimpleRequestHandler(dp, bot).register(app, path="/")
