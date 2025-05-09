@@ -12,6 +12,7 @@ class Config:
     WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://stellarbankbot.onrender.com/webhook")
     CRYPTO_API_URL = "https://pay.crypt.bot/api"
     STAR_PRICE_RUB = 1.6
+    PORT = 10000
 
     @classmethod
     def validate(cls):
