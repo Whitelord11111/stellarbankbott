@@ -5,6 +5,7 @@ import hashlib
 import uuid
 import json
 import aiohttp
+import asyncio
 from datetime import datetime
 from aiogram import Bot, Dispatcher, Router, types, F
 from aiogram.filters import Command
@@ -55,9 +56,12 @@ class PurchaseStates(StatesGroup):
 # Клавиатуры
 def main_menu():
     return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="⭐️ Купить звёзды")]],
+        keyboard=[
+            [KeyboardButton(text="⭐️ Купить звёзды")],
+            [KeyboardButton(text="💰 Баланс"), KeyboardButton(text="📊 Статистика")]
+        ],
         resize_keyboard=True,
-        one_time_keyboard=True
+        one_time_keyboard=False
     )
 
 def currency_menu():
@@ -86,9 +90,12 @@ async def crypto_api_request(method: str, endpoint: str, data: dict = None):
                 json=data,
                 headers={"Crypto-Pay-API-Token": Config.CRYPTOBOT_TOKEN}
             ) as resp:
-                return await resp.json()
+                response = await resp.json()
+                if not response.get('ok'):
+                    logger.error(f"Crypto API error: {response}")
+                return response
     except Exception as e:
-        logger.error(f"Crypto API error: {str(e)}")
+        logger.error(f"Crypto API request failed: {str(e)}")
         return None
 
 # Хендлеры
@@ -119,7 +126,7 @@ async def handle_package(call: types.CallbackQuery, state: FSMContext):
     action = call.data.split("_")[1]
     
     if action == "custom":
-        await call.message.answer("Введите количество звёзд (10-1000):")
+        await call.message.answer(f"Введите количество звёзд ({Config.MIN_STARS}-{Config.MAX_STARS}):")
         await state.set_state(PurchaseStates.input_custom)
     else:
         stars = int(action)
@@ -171,36 +178,46 @@ async def process_currency(message: types.Message, state: FSMContext):
     stars = data['stars']
     amount_rub = stars * Config.STAR_PRICE_RUB
     
-    # Получение курса валюты
     rates = await crypto_api_request("GET", "exchange-rates")
-    currency_rate = next(
-        (r for r in rates['result'] if r['source'] == message.text and r['target'] == 'RUB'),
-        None
-    )
-    
-    if not currency_rate:
-        await message.answer("Ошибка получения курса. Попробуйте позже.")
+    if not rates or 'result' not in rates:
+        await message.answer("❌ Ошибка получения курсов валют")
         await state.clear()
         return
     
-    amount_crypto = round(amount_rub / float(currency_rate['rate']), 6)
-    invoice_id = str(uuid.uuid4())
+    currency_data = next(
+        (r for r in rates['result'] 
+         if r.get('source') == message.text and r.get('target') == 'RUB'),
+        None
+    )
     
-    # Создание инвойса
+    if not currency_data:
+        await message.answer("❌ Не удалось найти курс для выбранной валюты")
+        await state.clear()
+        return
+    
+    try:
+        currency_rate = float(currency_data['rate'])
+        amount_crypto = round(amount_rub / currency_rate, 6)
+    except (KeyError, ValueError) as e:
+        logger.error(f"Currency error: {str(e)}")
+        await message.answer("❌ Ошибка расчёта суммы")
+        await state.clear()
+        return
+    
+    invoice_id = str(uuid.uuid4())
     invoice = await crypto_api_request("POST", "create-invoice", {
         "asset": message.text,
-        "amount": amount_crypto,
+        "amount": str(amount_crypto),
         "description": f"Покупка {stars} звёзд",
         "hidden_message": str(message.from_user.id),
         "payload": invoice_id
     })
     
-    if not invoice or not invoice.get('result'):
-        await message.answer("Ошибка создания платежа. Попробуйте позже.")
+    if not invoice or 'result' not in invoice:
+        await message.answer("❌ Ошибка создания платежа")
         await state.clear()
         return
     
-    # Сохранение транзакции
     async with db.cursor() as cursor:
         await cursor.execute(
             """INSERT INTO transactions 
@@ -210,15 +227,14 @@ async def process_currency(message: types.Message, state: FSMContext):
              invoice_id, "created")
         )
     
-    pay_url = invoice['result']['pay_url']
     markup = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💳 Оплатить", url=pay_url)],
+        [InlineKeyboardButton(text="💳 Оплатить", url=invoice['result']['pay_url'])],
         [InlineKeyboardButton(text="🔄 Проверить оплату", callback_data=f"check_{invoice_id}")]
     ])
     
     await message.answer(
-        f"Сумма к оплате: {amount_crypto} {message.text}\n"
-        f"Ссылка для оплаты: {pay_url}",
+        f"💎 Сумма к оплате: {amount_crypto} {message.text}\n"
+        "⚠️ Платеж действителен 15 минут",
         reply_markup=markup
     )
     await state.set_state(PurchaseStates.payment_waiting)
@@ -229,8 +245,8 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
     invoice_id = call.data.split("_")[1]
     invoice_data = await crypto_api_request("GET", f"invoices/{invoice_id}")
     
-    if not invoice_data or not invoice_data.get('result'):
-        await call.answer("Ошибка проверки платежа")
+    if not invoice_data or 'result' not in invoice_data:
+        await call.answer("❌ Ошибка проверки платежа")
         return
     
     status = invoice_data['result']['status']
@@ -248,14 +264,6 @@ async def process_tag(message: types.Message, state: FSMContext):
     invoice_id = data['invoice_id']
     recipient_tag = message.text.lstrip('@')
     
-    # Обновление транзакции
-    async with db.cursor() as cursor:
-        await cursor.execute(
-            "UPDATE transactions SET status='completed', recipient_tag=? WHERE invoice_id=?",
-            (recipient_tag, invoice_id)
-        )
-    
-    # Отправка звёзд через Fragment API
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(
@@ -264,9 +272,16 @@ async def process_tag(message: types.Message, state: FSMContext):
                 headers={"Authorization": f"Bearer {Config.FRAGMENT_KEY}"}
             ) as resp:
                 if resp.status != 200:
-                    raise Exception(f"Fragment API error: {await resp.text()}")
+                    error = await resp.text()
+                    raise Exception(f"Fragment API error: {error}")
                 
-                # Обновление баланса пользователя
+                async with db.cursor() as cursor:
+                    await cursor.execute(
+                        """UPDATE transactions 
+                        SET status='completed', recipient_tag=?
+                        WHERE invoice_id=?""",
+                        (recipient_tag, invoice_id)
+                    
                     await cursor.execute(
                         """UPDATE users 
                         SET total_stars = total_stars + ?, 
@@ -277,9 +292,9 @@ async def process_tag(message: types.Message, state: FSMContext):
                     )
                     
                 await message.answer(f"✅ {data['stars']} звёзд отправлены на @{recipient_tag}!")
+                
     except Exception as e:
-        logger.error(f"Fragment API error: {str(e)}")
-        # Возврат средств
+        logger.error(f"Ошибка отправки: {str(e)}")
         await crypto_api_request("POST", f"invoices/{invoice_id}/refund")
         async with db.cursor() as cursor:
             await cursor.execute(
@@ -287,8 +302,59 @@ async def process_tag(message: types.Message, state: FSMContext):
                 (invoice_id,)
             )
         await message.answer("❌ Ошибка отправки. Средства возвращены.")
-
+    
     await state.clear()
+
+@router.message(F.text == "💰 Баланс")
+async def show_balance(message: types.Message):
+    async with db.cursor() as cursor:
+        await cursor.execute(
+            "SELECT total_stars, total_spent FROM users WHERE user_id = ?",
+            (message.from_user.id,)
+        )
+        user_data = await cursor.fetchone()
+    
+    if user_data:
+        await message.answer(
+            f"📊 Ваш баланс:\n"
+            f"⭐️ Звёзд: {user_data['total_stars']}\n"
+            f"💰 Потрачено: {user_data['total_spent']:.2f}₽"
+        )
+    else:
+        await message.answer("❌ Профиль не найден")
+
+@router.message(F.text == "📊 Статистика")
+async def show_stats(message: types.Message):
+    async with db.cursor() as cursor:
+        # Пользовательская статистика
+        await cursor.execute(
+            """SELECT COUNT(*) as orders, SUM(stars) as stars 
+            FROM transactions 
+            WHERE user_id = ? AND status = 'completed'""",
+            (message.from_user.id,)
+        )
+        user_stats = await cursor.fetchone()
+        
+        # Глобальная статистика
+        await cursor.execute(
+            "SELECT SUM(total_stars) as total_stars, SUM(total_spent) as total_spent FROM users"
+        )
+        global_stats = await cursor.fetchone()
+
+    response = "📈 Ваша статистика:\n"
+    if user_stats['orders']:
+        response += f"├ Заказов: {user_stats['orders']}\n"
+        response += f"└ Звёзд: {user_stats['stars']}\n\n"
+    else:
+        response += "└ Нет завершённых заказов\n\n"
+    
+    response += (
+        "🌐 Общая статистика:\n"
+        f"├ Всего звёзд: {global_stats['total_stars'] or 0}\n"
+        f"└ Общая выручка: {global_stats['total_spent'] or 0:.2f}₽"
+    )
+    
+    await message.answer(response)
 
 # Вебхуки
 async def telegram_webhook(request: web.Request):
@@ -306,7 +372,7 @@ async def crypto_webhook(request: web.Request):
     expected_sig = hmac.new(secret, body.encode(), hashlib.sha256).hexdigest()
     
     if not hmac.compare_digest(sig, expected_sig):
-        logger.warning("Invalid webhook signature")
+        logger.warning("Invalid CryptoBot signature")
         return web.Response(status=403)
     
     data = json.loads(body)
@@ -329,7 +395,7 @@ async def on_startup():
         url=Config.WEBHOOK_URL,
         secret_token=Config.WEBHOOK_SECRET
     )
-    await notify_admins("Бот успешно запущен")
+    await notify_admins("🟢 Бот успешно запущен")
 
 async def main():
     Config.validate()
@@ -349,5 +415,4 @@ async def main():
     await asyncio.Future()
 
 if __name__ == "__main__":
-    import asyncio
     asyncio.run(main())
