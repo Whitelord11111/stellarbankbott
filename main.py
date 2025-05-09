@@ -267,45 +267,44 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
 @router.message(PurchaseStates.enter_telegram_tag)
 async def process_tag(message: types.Message, state: FSMContext):
     try:
-        tag = message.text.lstrip("@")
+        tag = message.text.lstrip("@")  # Убираем @, если пользователь ввел
         data = await state.get_data()
         
-        # Проверка тега через Fragment API
+        # Проверка валидности тега через Fragment API
         async with aiohttp.ClientSession() as session:
-            # 1. Проверка тега
-            async with session.get(
-                "https://api.fragment.com/username/check",
-                params={"username": tag},
-                headers={"Authorization": f"Bearer {Config.FRAGMENT_API_KEY}"}
-            ) as resp:
-                if resp.status != 200:
-                    error_text = await resp.text()
-                    raise ValueError(f"Fragment API error: {error_text}")
-                
-                result = await resp.json()
-                if not result.get("ok") or not result["result"].get("valid"):
-                    raise ValueError("Тег невалиден")
+            # 1. Проверка существования тега
+            try:
+                # Если Fragment требует отдельную проверку, добавьте здесь
+                # Если нет — проверяем через Telegram API
+                await bot.get_chat(f"@{tag}")
+            except Exception as e:
+                await message.answer("❌ Тег не существует или закрыт!")
+                raise
 
-            # 2. Покупка звезд
+            # 2. Покупка звезд через Fragment API
+            payload = {
+                "username": tag,
+                "quantity": data["amount"],
+                "show_sender": False
+            }
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {Config.FRAGMENT_API_KEY}"
+            }
+
             async with session.post(
-                "https://api.fragment.com/purchase",
-                headers={
-                    "Authorization": f"Bearer {Config.FRAGMENT_API_KEY}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "username": tag,
-                    "amount": data["amount"],
-                    "currency": "STARS"
-                }
+                Config.FRAGMENT_API_URL,
+                json=payload,
+                headers=headers
             ) as resp:
                 if resp.status != 200:
                     error_text = await resp.text()
-                    raise ValueError(f"Ошибка покупки: {error_text}")
-                
-                purchase_result = await resp.json()
-                if not purchase_result.get("ok"):
-                    raise ValueError(purchase_result.get("error", "Ошибка"))
+                    logger.error(f"Fragment API Error: {error_text}")
+                    raise ValueError("Ошибка покупки звезд")
+
+                result = await resp.json()
+                if not result.get("success", False):
+                    raise ValueError(result.get("message", "Unknown error"))
 
         # 3. Обновление транзакции
         with db_connection() as conn:
@@ -317,7 +316,7 @@ async def process_tag(message: types.Message, state: FSMContext):
             )
             conn.commit()
 
-        await message.answer(f"🎉 Успешно! {data['amount']} звёзд отправлены @{tag}")
+        await message.answer(f"✅ Успешно! {data['amount']} звёзд отправлены @{tag}")
 
     except Exception as e:
         logger.error(f"Ошибка: {str(e)}", exc_info=True)
