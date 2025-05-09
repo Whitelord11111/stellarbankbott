@@ -369,7 +369,7 @@ async def on_startup(dp: Dispatcher):
 async def main():
     dp = Dispatcher()
     dp.include_router(router)
-    dp.startup.register(on_startup)
+    dp.startup.register(on_startup)  # Добавьте эту строку!
     
     # Настройка веб-сервера
     app = web.Application()
@@ -386,6 +386,7 @@ async def main():
         await dp.start_polling(bot)
     finally:
         await runner.cleanup()
+
 
 if __name__ == "__main__":
     import asyncio
