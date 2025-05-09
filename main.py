@@ -6,7 +6,6 @@ import hashlib
 import json
 
 from aiogram import Bot, Dispatcher, Router, types, F
-from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.enums import ParseMode
@@ -87,7 +86,7 @@ async def crypto_api_request(method: str, endpoint: str, data: dict = None) -> d
         return {"ok": False, "error": str(e)}
 
 # ——— Handlers ——————————————————————————————————
-@router.message(Command(commands="start"))
+@router.message(commands=["start"])
 async def cmd_start(message: types.Message):
     try:
         with db_connection() as conn:
@@ -266,7 +265,6 @@ async def process_tag(message: types.Message, state: FSMContext):
 
     except Exception as e:
         logger.error(f"process_tag error: {e}", exc_info=True)
-        # refund
         try:
             await crypto_api_request("POST", f"refund/{data['invoice_id']}")
             logger.info(f"Refunded invoice {data['invoice_id']}")
