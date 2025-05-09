@@ -5,7 +5,7 @@ load_dotenv()
 
 class Config:
     # Переименовано BOT_TOKEN -> TELEGRAM_TOKEN (для aiogram)
-    TELEGRAM_TOKEN = os.getenv("BOT_TOKEN") or ""
+    TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") or ""
     CRYPTOBOT_TOKEN = os.getenv("CRYPTOBOT_TOKEN") or ""
     FRAGMENT_API_KEY = os.getenv("FRAGMENT_API_KEY", "")
     WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "default_secret")  # Добавлено
