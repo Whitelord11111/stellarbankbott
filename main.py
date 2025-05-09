@@ -88,7 +88,7 @@ async def crypto_api_request(method: str, endpoint: str, data: dict = None) -> d
         return {"ok": False, "error": str(e)}
 
 # Хендлеры
-@@router.message(Command("start"))
+@router.message(Command("start"))
 async def start(message: types.Message):
     try:
         with db_connection() as conn:
