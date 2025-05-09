@@ -388,7 +388,7 @@ async def main():
         logger.info(f"Сервер запущен на порту {Config.PORT}")
         # Уберите строку с start_polling!
         while True:
-    await asyncio.sleep(3600)  # Бесконечное ожидание для работы сервера
+            await asyncio.sleep(3600)  # Бесконечное ожидание для работы сервера
     finally:
         await runner.cleanup()
 
