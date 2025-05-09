@@ -1,5 +1,5 @@
 import logging
-import logging.handlers  # Добавлен критически важный импорт
+import logging.handlers
 import hmac
 import hashlib
 import uuid
@@ -11,6 +11,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.enums import ParseMode
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler
 from aiogram.types import (
     ReplyKeyboardMarkup,
     KeyboardButton,
@@ -21,7 +22,7 @@ from aiohttp import web
 from config import Config
 from database import Database
 
-# Исправленная секция логирования
+# Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -291,13 +292,16 @@ async def process_tag(message: types.Message, state: FSMContext):
 
 # Вебхуки
 async def telegram_webhook(request: web.Request):
-    return await SimpleRequestHandler(dp, bot).handle(request)
+    return await SimpleRequestHandler(
+        dispatcher=dp,
+        bot=bot,
+        secret_token=Config.WEBHOOK_SECRET
+    ).handle(request)
 
 async def crypto_webhook(request: web.Request):
     body = await request.text()
     sig = request.headers.get("Crypto-Pay-API-Signature", "")
     
-    # Валидация подписи
     secret = Config.WEBHOOK_SECRET.encode()
     expected_sig = hmac.new(secret, body.encode(), hashlib.sha256).hexdigest()
     
@@ -315,6 +319,9 @@ async def crypto_webhook(request: web.Request):
     
     return web.Response(text="OK")
 
+async def health_check(request: web.Request):
+    return web.Response(text="OK")
+
 # Запуск
 async def on_startup():
     await db.connect()
@@ -329,8 +336,9 @@ async def main():
     dp.include_router(router)
     
     app = web.Application()
-    app.router.add_post("/webhook", telegram_webhook)
+    app.router.add_post(Config.WEBHOOK_PATH, telegram_webhook)
     app.router.add_post("/crypto_webhook", crypto_webhook)
+    app.router.add_get("/healthz", health_check)
     
     runner = web.AppRunner(app)
     await runner.setup()
