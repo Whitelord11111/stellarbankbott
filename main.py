@@ -31,18 +31,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ——— Bot & Dispatcher & Router —————————————————————
+# ——— Bot, Dispatcher & Router —————————————————————
 bot = Bot(token=Config.TELEGRAM_TOKEN, parse_mode=ParseMode.HTML)
 dp = Dispatcher()
 router = Router()
 
 # ——— FSM States ———————————————————————————————————
 class PurchaseStates(StatesGroup):
-    select_package    = State()
-    confirm_purchase  = State()
-    input_custom      = State()
-    select_currency   = State()
-    payment_waiting   = State()
+    select_package     = State()
+    confirm_purchase   = State()
+    input_custom       = State()
+    select_currency    = State()
+    payment_waiting    = State()
     enter_telegram_tag = State()
 
 # ——— Initialize DB ————————————————————————————
@@ -87,7 +87,7 @@ async def crypto_api_request(method: str, endpoint: str, data: dict = None) -> d
         return {"ok": False, "error": str(e)}
 
 # ——— Handlers ——————————————————————————————————
-@router.message(Command("start"))
+@router.message(Command(commands="start"))
 async def cmd_start(message: types.Message):
     try:
         with db_connection() as conn:
@@ -139,7 +139,7 @@ async def process_custom_input(message: types.Message, state: FSMContext):
     try:
         amt = int(message.text)
         if not 50 <= amt <= 1_000_000:
-            raise ValueError("out of range")
+            raise ValueError
         cost = amt * Config.STAR_PRICE_RUB
         await state.update_data(amount=amt, cost=cost)
         kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -165,17 +165,16 @@ async def confirm_purchase(call: types.CallbackQuery, state: FSMContext):
 async def process_currency(message: types.Message, state: FSMContext):
     data = await state.get_data()
     asset = message.text
-    # get rates
     rates = await crypto_api_request("GET", "getExchangeRates")
     if not rates.get("ok"):
         return await message.answer("❌ Не удалось получить курс.")
-    rate = next((r["rate"] for r in rates["result"]
+    rate = next((float(r["rate"]) for r in rates["result"]
                  if r["source"] == asset and r["target"] == "RUB"), None)
     if rate is None:
         return await message.answer(f"❌ Курс {asset}/RUB не найден.")
     total_rub = data["cost"]
-    total_crypto = total_rub / float(rate)
-    # create invoice
+    total_crypto = total_rub / rate
+
     inv = await crypto_api_request("POST", "createInvoice", {
         "asset": asset,
         "amount": f"{total_crypto:.8f}",
@@ -184,6 +183,7 @@ async def process_currency(message: types.Message, state: FSMContext):
     if not inv.get("ok"):
         return await message.answer("❌ Ошибка создания счёта.")
     inv_data = inv["result"]
+
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton("💳 Оплатить", url=inv_data["pay_url"])],
         [InlineKeyboardButton("🔄 Проверить оплату", callback_data=f"check_{inv_data['invoice_id']}")]
@@ -192,7 +192,7 @@ async def process_currency(message: types.Message, state: FSMContext):
         f"📄 Счёт:\n• {total_crypto:.8f} {asset}\n• {total_rub:.2f}₽\n• {data['amount']} ⭐️",
         reply_markup=kb
     )
-    # save transaction
+
     with db_connection() as conn:
         conn.execute(
             "INSERT INTO transactions "
@@ -226,12 +226,12 @@ async def cancel_tag_input(message: types.Message, state: FSMContext):
 @router.message(PurchaseStates.enter_telegram_tag)
 async def process_tag(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    if not data.get("invoice_id"):
-        await message.answer("❌ Сессия истекла.")
+    if "invoice_id" not in data:
+        await message.answer("❌ Сессия устарела.")
         return await state.clear()
 
     tag = message.text.lstrip("@")
-    logger.info(f"Order stars: user={message.from_user.id} tag={tag} amount={data['amount']}")
+    logger.info(f"Sending stars: user={message.from_user.id} tag={tag} amount={data['amount']}")
 
     try:
         async with ClientSession() as session:
@@ -276,7 +276,7 @@ async def process_tag(message: types.Message, state: FSMContext):
     finally:
         await state.clear()
 
-# ——— Webhook handlers —————————————————————————————
+# ——— Webhook Handlers —————————————————————————————
 async def telegram_webhook(request: web.Request):
     return await SimpleRequestHandler(dp, bot).handle(request)
 
@@ -296,7 +296,7 @@ async def crypto_webhook(request: web.Request):
             )
     return web.Response(text="OK")
 
-# ——— Startup & main —————————————————————————————
+# ——— Startup & Main —————————————————————————————
 async def on_startup():
     await bot.delete_webhook(drop_pending_updates=True)
     await bot.set_webhook(
@@ -309,7 +309,7 @@ async def on_startup():
 async def main():
     Config.validate()
     app = web.Application()
-    app.router.add_post("/webhook",       telegram_webhook)
+    app.router.add_post("/webhook",        telegram_webhook)
     app.router.add_post("/crypto_webhook", crypto_webhook)
 
     runner = web.AppRunner(app)
