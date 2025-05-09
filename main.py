@@ -281,6 +281,7 @@ async def process_tag(message: types.Message, state: FSMContext):
                         SET status='completed', recipient_tag=?
                         WHERE invoice_id=?""",
                         (recipient_tag, invoice_id)
+                    )
                     
                     await cursor.execute(
                         """UPDATE users 
