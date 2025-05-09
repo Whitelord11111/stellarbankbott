@@ -1,5 +1,5 @@
-# main.py
 import logging
+import logging.handlers  # Добавлен критически важный импорт
 import hmac
 import hashlib
 import uuid
@@ -21,7 +21,7 @@ from aiohttp import web
 from config import Config
 from database import Database
 
-# Настройка логирования
+# Исправленная секция логирования
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
