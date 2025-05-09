@@ -88,19 +88,21 @@ async def crypto_api_request(method: str, endpoint: str, data: dict = None) -> d
         return {"ok": False, "error": str(e)}
 
 # Хендлеры
-@router.message(Command("start"))
+@@router.message(Command("start"))
 async def start(message: types.Message):
     try:
         with db_connection() as conn:
+            # Используем INSERT OR REPLACE для избежания конфликтов
             conn.execute(
-                "INSERT OR IGNORE INTO users (user_id, username) VALUES (?, ?)",
+                """INSERT OR REPLACE INTO users (user_id, username) 
+                VALUES (?, ?)""",
                 (message.from_user.id, message.from_user.username)
             )
             conn.commit()
         await message.answer("🚀 Добро пожаловать в StellarBankBot!", reply_markup=main_menu())
     except Exception as e:
-        logger.error(f"Database Error: {str(e)}")
-        await message.answer("❌ Произошла внутренняя ошибка. Попробуйте позже.")
+        logger.error(f"Ошибка БД: {str(e)}")
+        await message.answer("❌ Ошибка сервиса. Попробуйте позже.")
 
 @router.message(F.text == "⭐️ Покупка звёзд")
 async def buy_stars(message: types.Message):
@@ -272,8 +274,16 @@ async def cancel_tag_input(message: types.Message, state: FSMContext):
 @router.message(PurchaseStates.enter_telegram_tag)
 async def process_tag(message: types.Message, state: FSMContext):
     try:
-        tag = message.text.lstrip("@")
         data = await state.get_data()
+        if "amount" not in data or "invoice_id" not in data:
+            await message.answer("❌ Сессия устарела. Начните заново.")
+            await state.clear()
+            return
+
+        tag = message.text.lstrip("@")
+        
+        # Логируем данные
+        logger.info(f"Данные состояния: {data}")
         
         async with aiohttp.ClientSession() as session:
             # 1. Пытаемся отправить звезды через Fragment API
@@ -330,11 +340,16 @@ async def process_tag(message: types.Message, state: FSMContext):
     except Exception as e:
         logger.error(f"Ошибка: {str(e)}", exc_info=True)
         if 'invoice_id' in data:
-            logger.info(f"Возврат средств для инвойса {data['invoice_id']}")
-            await crypto_api_request("POST", f"refund/{data['invoice_id']}")
+            await refund_payment(data["invoice_id"])
         await message.answer("❌ Критическая ошибка. Средства возвращены.")
-    finally:
         await state.clear()
+
+async def refund_payment(invoice_id: str):
+    try:
+        response = await crypto_api_request("POST", f"refund/{invoice_id}")
+        logger.info(f"Результат возврата: {response}")
+    except Exception as e:
+        logger.error(f"Ошибка возврата: {str(e)}")
 
 # Вебхук обработчик
 async def telegram_webhook(request: web.Request):
