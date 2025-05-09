@@ -13,13 +13,17 @@ services:
       maxInstances: 3
     branch: main
     envVars:
-      - key: BOT_TOKEN
+      - key: TELEGRAM_TOKEN
         value: "7391952562:AAHEVkEAqvyEc5YYwQZowaQVOoXYqDCKcC4"
       - key: CRYPTOBOT_TOKEN
         value: "378343:AA836haaZrzZYInSBc1fXlm9HcgQsz4ChrS"
       - key: FRAGMENT_API_KEY
         value: "c32ec465-5d81-4ca0-84d9-df6840773859"
       - key: WEBHOOK_URL
-        value: "https://stellarbankbot.onrender.com"
+        value: "https://stellarbankbot.onrender.com/webhook"
       - key: PORT
         value: "8080"
+      - key: WEBHOOK_SECRET
+        value: "2bb939812e843d9991ea70143cee221e"
+      - key: PYTHONUNBUFFERED
+        value: "TRUE"
