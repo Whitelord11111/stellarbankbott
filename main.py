@@ -329,6 +329,12 @@ async def process_tag(message: types.Message, state: FSMContext):
         await state.clear()
 
 # Вебхук обработчик
+async def telegram_webhook(request: web.Request):
+    """Обработчик вебхуков от Telegram."""
+    body = await request.text()
+    logger.info(f"Тело запроса от Telegram: {body}")
+    return await SimpleRequestHandler(dp, bot).handle(request)
+
 async def crypto_webhook(request: web.Request):
     logger.info("Получен вебхук от Crypto Pay!")
     body = await request.text()
@@ -376,7 +382,8 @@ async def main():
     
     # Настройка веб-сервера
     app = web.Application()
-    app.router.add_post("/webhook", crypto_webhook)
+    app.router.add_post("/crypto_webhook", crypto_webhook)  # Для Crypto Pay
+    app.router.add_post("/webhook", telegram_webhook)       # Для Telegram
     SimpleRequestHandler(dp, bot).register(app, path="/")
     
     runner = web.AppRunner(app)
