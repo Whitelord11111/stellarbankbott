@@ -331,6 +331,8 @@ async def process_tag(message: types.Message, state: FSMContext):
 # Вебхук обработчик
 async def crypto_webhook(request: web.Request):
     logger.info("Получен вебхук от Crypto Pay!")
+    body = await request.text()
+    logger.debug(f"Тело запроса: {body}")  # Логируем данные
     try:
         body = await request.text()
         signature = request.headers.get("Crypto-Pay-API-Signature")
@@ -379,13 +381,14 @@ async def main():
     
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, host="0.0.0.0", port=int(Config.PORT))
+    site = web.TCPSite(runner, host="0.0.0.0", port=int(Config.PORT))  # 0.0.0.0 обязательно!
     
     try:
         await site.start()
         logger.info(f"Сервер запущен на порту {Config.PORT}")
         # Уберите строку с start_polling!
-        await asyncio.Future()  # Бесконечное ожидание для работы сервера
+        while True:
+    await asyncio.sleep(3600)  # Бесконечное ожидание для работы сервера
     finally:
         await runner.cleanup()
 
