@@ -330,6 +330,7 @@ async def process_tag(message: types.Message, state: FSMContext):
 
 # Вебхук обработчик
 async def crypto_webhook(request: web.Request):
+    logger.info("Получен вебхук от Crypto Pay!")
     try:
         body = await request.text()
         signature = request.headers.get("Crypto-Pay-API-Signature")
@@ -358,19 +359,20 @@ async def crypto_webhook(request: web.Request):
         logger.error(f"Webhook Error: {str(e)}")
         return web.Response(status=500)
 
-async def on_startup():  # Исправленная сигнатура
+async def on_startup():
     await bot.delete_webhook(drop_pending_updates=True)
-    if Config.WEBHOOK_URL:
-        await bot.set_webhook(
-            url=Config.WEBHOOK_URL,
-            secret_token=Config.WEBHOOK_SECRET
-        )
+    await bot.set_webhook(
+        url=Config.WEBHOOK_URL,
+        secret_token=Config.WEBHOOK_SECRET
+    )
+    logger.info("Вебхук успешно установлен!")
 
 async def main():
     dp = Dispatcher()
     dp.include_router(router)
-    dp.startup.register(on_startup)  # Корректная регистрация
+    dp.startup.register(on_startup)
     
+    # Настройка веб-сервера
     app = web.Application()
     app.router.add_post("/webhook", crypto_webhook)
     SimpleRequestHandler(dp, bot).register(app, path="/")
@@ -382,7 +384,8 @@ async def main():
     try:
         await site.start()
         logger.info(f"Сервер запущен на порту {Config.PORT}")
-        await dp.start_polling(bot)
+        # Уберите строку с start_polling!
+        await asyncio.Future()  # Бесконечное ожидание для работы сервера
     finally:
         await runner.cleanup()
 
