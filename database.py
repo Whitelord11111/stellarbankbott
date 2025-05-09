@@ -1,6 +1,8 @@
+# database.py
+import sqlite3
 import logging
 from contextlib import asynccontextmanager
-from aiosqlite import connect, Error
+from aiosqlite import connect
 
 logger = logging.getLogger(__name__)
 
@@ -8,19 +10,20 @@ class Database:
     _instance = None
     
     def __init__(self):
-        self.pool = None
+        self.conn = None
     
     async def connect(self):
-        try:
-            self.pool = await connect("stellarbot.db")
-            await self._init_db()
-            logger.info("Database connected")
-        except Error as e:
-            logger.error(f"Database connection failed: {e}")
-            raise
+        self.conn = await connect(
+            "stellarbot.db",
+            row_factory=sqlite3.Row  # Добавляем row factory
+        )
+        await self._init_db()
+        logger.info("Database connected")
 
     async def _init_db(self):
-        async with self.pool.cursor() as cursor:
+        async with self.conn.cursor() as cursor:
+            # Создание таблиц
+            await cursor.execute("PRAGMA foreign_keys = ON")
             await cursor.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     user_id INTEGER PRIMARY KEY,
@@ -42,19 +45,20 @@ class Database:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )""")
             
+            # Индексы
             await cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_trans_user 
                 ON transactions(user_id)""")
             
-            await self.pool.commit()
+            await self.conn.commit()
 
     @asynccontextmanager
     async def cursor(self):
-        async with self.pool.cursor() as cursor:
+        async with self.conn.cursor() as cursor:
             try:
                 yield cursor
-                await self.pool.commit()
+                await self.conn.commit()
             except Exception as e:
-                await self.pool.rollback()
+                await self.conn.rollback()
                 logger.error(f"DB Error: {e}")
                 raise
