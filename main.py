@@ -89,27 +89,18 @@ async def crypto_api_request(method: str, endpoint: str, data: dict = None):
             "Content-Type": "application/json"
         }
         
-        logger.debug(f"Making request to: {url}")
-        
         async with aiohttp.ClientSession() as session:
             async with session.request(
                 method,
                 url,
-                json=data,
+                json=data,  # Параметры теперь в теле
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=10)
             ) as resp:
                 response = await resp.json()
-                logger.debug(f"API Response: {response}")
-                
                 if resp.status != 200:
-                    logger.error(f"HTTP Error {resp.status}: {response}")
+                    logger.error(f"CryptoBot Error {resp.status}: {response}")
                     return None
-                    
-                if not response.get('ok'):
-                    logger.error(f"API Error: {response.get('error')}")
-                    return None
-                    
                 return response
                 
     except Exception as e:
