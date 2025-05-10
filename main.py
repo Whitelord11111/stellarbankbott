@@ -222,17 +222,21 @@ async def process_currency(message: types.Message, state: FSMContext):
 
         # 4. Создание инвойса
         invoice_id = str(uuid.uuid4())
-        invoice = await crypto_api_request(
-            "POST", 
-            "createInvoice",  # Исправлен эндпоинт
-            {
-                "asset": message.text,
-                "amount": str(amount_crypto),
-                "description": f"Покупка {stars} звёзд",
-                "hidden_message": str(message.from_user.id),
-                "payload": invoice_id
-            }
-        )
+       invoice = await crypto_api_request(
+    "POST",
+    "createInvoice",
+    {
+        "asset": message.text.upper(),  # TON, USDT, BTC (в верхнем регистре)
+        "amount": f"{amount_crypto:.6f}".rstrip('0').rstrip('.') if '.' in f"{amount_crypto:.6f}" else f"{amount_crypto:.6f}",
+        "description": f"Stars purchase: {stars} ⭐",
+        "hidden_message": str(message.from_user.id),
+        "paid_btn_name": "openBot",  # Обязательный параметр
+        "paid_btn_url": "https://t.me/StellarBankBot",  # Обязательный параметр
+        "payload": invoice_id,
+        "allow_comments": False,  # Отключить комментарии
+        "allow_anonymous": False  # Запретить анонимные платежи
+    }
+)
 
         if not invoice or not invoice.get('result'):
             raise ValueError("Ошибка создания платежа")
