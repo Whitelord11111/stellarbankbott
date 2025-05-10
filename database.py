@@ -1,4 +1,3 @@
-# database.py
 import sqlite3
 import logging
 from contextlib import asynccontextmanager
@@ -13,16 +12,17 @@ class Database:
         self.conn = None
     
     async def connect(self):
-        self.conn = await connect(
-            "stellarbot.db",
-            row_factory=sqlite3.Row  # Добавляем row factory
-        )
+        # Исправление: убрали row_factory из параметров подключения
+        self.conn = await connect("stellarbot.db")
+        
+        # Устанавливаем row_factory после подключения
+        self.conn.row_factory = sqlite3.Row
+        
         await self._init_db()
         logger.info("Database connected")
 
     async def _init_db(self):
         async with self.conn.cursor() as cursor:
-            # Создание таблиц
             await cursor.execute("PRAGMA foreign_keys = ON")
             await cursor.execute("""
                 CREATE TABLE IF NOT EXISTS users (
@@ -45,7 +45,6 @@ class Database:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )""")
             
-            # Индексы
             await cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_trans_user 
                 ON transactions(user_id)""")
