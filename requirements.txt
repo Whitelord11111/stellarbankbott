@@ -1,5 +1,7 @@
+# requirements.txt
 aiogram==3.0.0b7
-aiohttp>=3.8.0
-python-dotenv>=0.21.0
-aiosqlite>=0.19.0
-aiosend>=2.1.0  # Добавляем официальную библиотеку
+aiohttp==3.9.0
+python-dotenv==1.0.0
+aiosqlite==0.19.0
+aiosend==2.1.0
+magic-filter==1.0.12
