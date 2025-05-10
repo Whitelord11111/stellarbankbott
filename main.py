@@ -93,22 +93,22 @@ async def crypto_api_request(method: str, endpoint: str, data: dict = None):
             async with session.request(
                 method,
                 url,
-                json=data if method == "POST" else None,  # Разделение GET/POST
-                params=data if method == "GET" else None, # Параметры для GET
+                json=data if method == "POST" else None,
+                params=data if method == "GET" else None,
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=10)
             ) as resp:
-                    response = await resp.json()
+                response = await resp.json()  # 4 пробела
                 
-                if resp.status != 200:
+                if resp.status != 200:  # Выровнено с response
                     logger.error(f"HTTP Error {resp.status}: {response}")
                     return None
                     
-                if not response.get('ok'):
+                if not response.get('ok'):  # Выровнено с предыдущим if
                     logger.error(f"API Error: {response.get('error')}")
                     return None
                     
-                return response
+                return response  # Выровнено с остальными
                 
     except Exception as e:
         logger.error(f"Crypto API request failed: {str(e)}")
