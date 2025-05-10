@@ -328,15 +328,14 @@ async def process_tag(message: types.Message, state: FSMContext):
                     raise Exception(f"Fragment API Error: {error}")
                 
                 # Обновляем статус в БД
-                async with db.cursor() as cursor:
-                    await cursor.execute(
-                        """UPDATE transactions 
-                        SET status='completed', 
-                            recipient_tag=?,
-                            completed_at=CURRENT_TIMESTAMP
-                        WHERE invoice_id=?""",
-                        (recipient_tag, invoice_id)
-                    )
+                await cursor.execute(
+                    """UPDATE transactions 
+                    SET status='completed', 
+                        recipient_tag=?,
+                        completed_at=CURRENT_TIMESTAMP
+                    WHERE invoice_id=?""",
+                    (recipient_tag, invoice_id)
+                )
                     
                     await cursor.execute(
                         """UPDATE users 
