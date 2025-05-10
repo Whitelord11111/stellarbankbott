@@ -303,20 +303,37 @@ async def process_tag(message: types.Message, state: FSMContext):
     recipient_tag = message.text.lstrip('@')
     
     try:
+        # Получаем данные о звездах из состояния
+        stars = data['stars']
+        amount_rub = stars * Config.STAR_PRICE_RUB
+        
+        # Отправка через Fragment API
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 Config.FRAGMENT_API_URL,
-                json={"recipient": recipient_tag, "stars": data['stars']},
-                headers={"Authorization": f"Bearer {Config.FRAGMENT_KEY}"}
+                json={
+                    "username": recipient_tag,
+                    "quantity": stars,
+                    "show_sender": False
+                },
+                headers={
+                    "Authorization": f"Bearer {Config.FRAGMENT_KEY}",
+                    "Content-Type": "application/json",
+                    "Accept": "application/json"
+                },
+                timeout=10
             ) as resp:
                 if resp.status != 200:
-                    error = await resp.text()
-                    raise Exception(f"Fragment API error: {error}")
+                    error = await resp.json()
+                    raise Exception(f"Fragment API Error: {error}")
                 
+                # Обновляем статус в БД
                 async with db.cursor() as cursor:
                     await cursor.execute(
                         """UPDATE transactions 
-                        SET status='completed', recipient_tag=?
+                        SET status='completed', 
+                            recipient_tag=?,
+                            completed_at=CURRENT_TIMESTAMP
                         WHERE invoice_id=?""",
                         (recipient_tag, invoice_id)
                     )
@@ -326,21 +343,27 @@ async def process_tag(message: types.Message, state: FSMContext):
                         SET total_stars = total_stars + ?, 
                             total_spent = total_spent + ?
                         WHERE user_id = ?""",
-                        (data['stars'], data['stars'] * Config.STAR_PRICE_RUB, 
-                         message.from_user.id)
+                        (stars, amount_rub, message.from_user.id)
                     )
                     
-                await message.answer(f"✅ {data['stars']} звёзд отправлены на @{recipient_tag}!")
+                await message.answer(f"✅ {stars} звёзд отправлены @{recipient_tag}!")
                 
     except Exception as e:
         logger.error(f"Ошибка отправки: {str(e)}")
-        await crypto_api_request("POST", f"invoices/{invoice_id}/refund")
-        async with db.cursor() as cursor:
-            await cursor.execute(
-                "UPDATE transactions SET status='refunded' WHERE invoice_id=?",
-                (invoice_id,)
-            )
-        await message.answer("❌ Ошибка отправки. Средства возвращены.")
+        # Возврат средств
+        refund = await crypto_api_request(
+            "POST",
+            f"invoices/{invoice_id}/refund"
+        )
+        if refund and refund.get('status') == 'completed':
+            async with db.cursor() as cursor:
+                await cursor.execute(
+                    "UPDATE transactions SET status='refunded' WHERE invoice_id=?",
+                    (invoice_id,)
+                )
+            await message.answer("❌ Ошибка отправки. Средства возвращены.")
+        else:
+            await message.answer("❌ Ошибка отправки. Обратитесь в поддержку.")
     
     await state.clear()
 
