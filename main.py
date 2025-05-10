@@ -7,17 +7,21 @@ from aiosend import CryptoPay
 from config import Config
 from database import Database
 
+# Настройка логирования
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # Инициализация
 bot = Bot(token=Config.TELEGRAM_TOKEN)
 dp = Dispatcher()
 db = Database()
 cp = CryptoPay(token=Config.CRYPTOBOT_TOKEN)
 
-# Состояния
+# Состояния FSM
 class PurchaseStates(StatesGroup):
-    select_amount = State()
-    confirm_payment = State()
-    enter_recipient = State()
+    SELECT_AMOUNT = State()
+    CONFIRM_PAYMENT = State()
+    ENTER_RECIPIENT = State()
 
 # Хендлеры
 @dp.message(Command("start"))
@@ -33,15 +37,14 @@ async def start(message: types.Message):
 @dp.message(F.text == "⭐️ Купить звёзды")
 async def buy_stars(message: types.Message, state: FSMContext):
     await message.answer("Введите количество звёзд (50-1,000,000):")
-    await state.set_state(PurchaseStates.select_amount)
+    await state.set_state(PurchaseStates.SELECT_AMOUNT)
 
-@dp.message(PurchaseStates.select_amount)
+@dp.message(PurchaseStates.SELECT_AMOUNT)
 async def process_amount(message: types.Message, state: FSMContext):
     try:
         stars = int(message.text)
         if not (Config.MIN_STARS <= stars <= Config.MAX_STARS):
             raise ValueError
-        await state.update_data(stars=stars)
         
         # Создание инвойса через aiosend
         invoice = await cp.create_invoice(
@@ -52,14 +55,18 @@ async def process_amount(message: types.Message, state: FSMContext):
         )
         
         await message.answer(
-            f"Оплатите {invoice.amount} USDT:\n{invoice.bot_invoice_url}",
+            f"💸 Оплатите {invoice.amount} USDT:\n{invoice.bot_invoice_url}",
             reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[[
-                types.InlineKeyboardButton(text="Проверить оплату", callback_data=f"check_{invoice.invoice_id}")
+                types.InlineKeyboardButton(
+                    text="✅ Проверить оплату",
+                    callback_data=f"check_{invoice.invoice_id}"
+                )
             ]])
         )
-        await state.set_state(PurchaseStates.confirm_payment)
-        
-    except Exception as e:
+        await state.update_data(invoice_id=invoice.invoice_id, stars=stars)
+        await state.set_state(PurchaseStates.CONFIRM_PAYMENT)
+
+    except ValueError:
         await message.answer("❌ Некорректное количество!")
         await state.clear()
 
@@ -70,11 +77,11 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
     
     if invoice.status == "paid":
         await call.message.answer("✅ Оплата подтверждена! Введите тег получателя:")
-        await state.set_state(PurchaseStates.enter_recipient)
+        await state.set_state(PurchaseStates.ENTER_RECIPIENT)
     else:
         await call.answer("⌛ Платеж не найден")
 
-@dp.message(PurchaseStates.enter_recipient)
+@dp.message(PurchaseStates.ENTER_RECIPIENT)
 async def send_stars(message: types.Message, state: FSMContext):
     data = await state.get_data()
     recipient = message.text.strip("@")
@@ -89,7 +96,9 @@ async def send_stars(message: types.Message, state: FSMContext):
             if resp.status == 200:
                 await message.answer(f"🌟 {data['stars']} звёзд отправлены @{recipient}!")
             else:
-                await message.answer("❌ Ошибка отправки")
+                error = await resp.text()
+                logger.error(f"Fragment API Error: {error}")
+                await message.answer("❌ Ошибка отправки. Обратитесь в поддержку.")
     
     await state.clear()
 
