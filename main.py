@@ -97,8 +97,7 @@ async def crypto_api_request(method: str, endpoint: str, data: dict = None):
                 params=data if method == "GET" else None, # Параметры для GET
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=10)
-            ) 
-                as resp:
+            ) as resp:
                     response = await resp.json()
                 
                 if resp.status != 200:
