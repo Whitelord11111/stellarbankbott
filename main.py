@@ -174,15 +174,17 @@ async def confirm_purchase(call: types.CallbackQuery, state: FSMContext):
 
 @router.message(PurchaseStates.select_currency, F.text.in_(["TON", "USDT", "BTC"]))
 async def process_currency(message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    stars = data['stars']
-    amount_rub = stars * Config.STAR_PRICE_RUB
-    
     try:
-        rates = await crypto_api_request("GET", "exchangeRates")
+        data = await state.get_data()
+        stars = data['stars']
+        amount_rub = stars * Config.STAR_PRICE_RUB
+
+        # 1. Получение курсов валют
+        rates = await crypto_api_request("GET", "exchange-rates")  # Исправлен эндпоинт
         if not rates or not rates.get('result'):
-            raise ValueError("Invalid response from Crypto API")
-            
+            raise ValueError("Не удалось получить курсы валют")
+
+        # 2. Поиск нужной валюты
         currency_data = next(
             (r for r in rates['result'] 
              if r.get('source') == message.text and r.get('target') == 'RUB'),
@@ -190,15 +192,17 @@ async def process_currency(message: types.Message, state: FSMContext):
         )
         
         if not currency_data:
-            raise ValueError("Currency not found")
-        
+            raise ValueError("Валюта не найдена")
+
+        # 3. Расчет суммы
         currency_rate = float(currency_data['rate'])
         amount_crypto = round(amount_rub / currency_rate, 6)
-        
+
+        # 4. Создание инвойса
         invoice_id = str(uuid.uuid4())
         invoice = await crypto_api_request(
             "POST", 
-            "createInvoice",
+            "create-invoice",  # Исправлен эндпоинт
             {
                 "asset": message.text,
                 "amount": str(amount_crypto),
@@ -207,35 +211,41 @@ async def process_currency(message: types.Message, state: FSMContext):
                 "payload": invoice_id
             }
         )
-        
+
         if not invoice or not invoice.get('result'):
-            raise ValueError("Invoice creation failed")
-    
-    async with db.cursor() as cursor:
-        await cursor.execute(
-            """INSERT INTO transactions 
-            (tx_id, user_id, stars, amount_rub, invoice_id, status)
-            VALUES (?, ?, ?, ?, ?, ?)""",
-            (str(uuid.uuid4()), message.from_user.id, stars, amount_rub, 
-             invoice_id, "created")
+            raise ValueError("Ошибка создания платежа")
+
+        # 5. Сохранение в БД
+        async with db.cursor() as cursor:
+            await cursor.execute(
+                """INSERT INTO transactions 
+                (tx_id, user_id, stars, amount_rub, invoice_id, status)
+                VALUES (?, ?, ?, ?, ?, ?)""",
+                (str(uuid.uuid4()), message.from_user.id, stars, amount_rub, 
+                 invoice_id, "created")
+            )
+
+        # 6. Формирование ответа
+        pay_url = invoice['result'].get('pay_url', '')
+        if not pay_url:
+            raise ValueError("Некорректный ответ от платежной системы")
+
+        markup = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💳 Оплатить", url=pay_url)],
+            [InlineKeyboardButton(text="🔄 Проверить оплату", callback_data=f"check_{invoice_id}")]
+        ])
+
+        await message.answer(
+            f"💎 Сумма к оплате: {amount_crypto} {message.text}\n"
+            "⚠️ Платеж действителен 15 минут",
+            reply_markup=markup
         )
-    
-    markup = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💳 Оплатить", url=invoice['result']['pay_url'])],
-        [InlineKeyboardButton(text="🔄 Проверить оплату", callback_data=f"check_{invoice_id}")]
-    ])
-    
-    await message.answer(
-        f"💎 Сумма к оплате: {amount_crypto} {message.text}\n"
-        "⚠️ Платеж действителен 15 минут",
-        reply_markup=markup
-    )
-    await state.set_state(PurchaseStates.payment_waiting)
-    await state.update_data(invoice_id=invoice_id)
+        await state.set_state(PurchaseStates.payment_waiting)
+        await state.update_data(invoice_id=invoice_id)
 
     except Exception as e:
-        logger.error(f"Currency process error: {str(e)}")
-        await message.answer("❌ Произошла ошибка при обработке запроса")
+        logger.error(f"Ошибка обработки валюты: {str(e)}")
+        await message.answer("❌ Произошла ошибка при создании платежа")
         await state.clear()
 
 @router.callback_query(F.data.startswith("check_"))
