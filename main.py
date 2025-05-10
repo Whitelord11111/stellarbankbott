@@ -83,24 +83,38 @@ async def notify_admins(message: str):
 
 async def crypto_api_request(method: str, endpoint: str, data: dict = None):
     try:
+        url = f"{Config.CRYPTO_API_URL}/{endpoint}"
+        headers = {
+            "Crypto-Pay-API-Token": Config.CRYPTOBOT_TOKEN,
+            "Content-Type": "application/json"
+        }
+        
+        logger.debug(f"Making request to: {url}")
+        
         async with aiohttp.ClientSession() as session:
             async with session.request(
                 method,
-                f"{Config.CRYPTO_API_URL}/{endpoint}",
+                url,
                 json=data,
-                headers={
-                    "Crypto-Pay-API-Token": Config.CRYPTOBOT_TOKEN,
-                    "Content-Type": "application/json"
-                }
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=10)
             ) as resp:
                 response = await resp.json()
-                logger.debug(f"Crypto API Response: {response}")
+                logger.debug(f"API Response: {response}")
                 
-                if resp.status != 200 or not response.get('ok'):
-                    logger.error(f"Crypto API Error: {response}")
+                if resp.status != 200:
+                    logger.error(f"HTTP Error {resp.status}: {response}")
                     return None
-                
+                    
+                if not response.get('ok'):
+                    logger.error(f"API Error: {response.get('error')}")
+                    return None
+                    
                 return response
+                
+    except Exception as e:
+        logger.error(f"Request failed: {str(e)}")
+        return None
                 
     except Exception as e:
         logger.error(f"Crypto API request failed: {str(e)}")
@@ -259,20 +273,25 @@ async def process_currency(message: types.Message, state: FSMContext):
 @router.callback_query(F.data.startswith("check_"))
 async def check_payment(call: types.CallbackQuery, state: FSMContext):
     invoice_id = call.data.split("_")[1]
-    invoice_data = await crypto_api_request("GET", f"invoices/{invoice_id}")
     
-    if not invoice_data or 'result' not in invoice_data:
+    invoice_data = await crypto_api_request(
+        "GET",
+        f"getInvoices?invoice_ids={invoice_id}"
+    )
+    
+    if not invoice_data or not invoice_data.get('result'):
         await call.answer("❌ Ошибка проверки платежа")
         return
     
-    status = invoice_data['result']['status']
+    invoice = invoice_data['result']['items'][0]  # Важно: items[0]
+    status = invoice['status']
     
     if status == 'paid':
-        await call.message.answer("✅ Оплата подтверждена! Введите Telegram тег получателя (например @username):")
+        await call.message.answer("✅ Оплата подтверждена! Введите Telegram тег получателя:")
         await state.set_state(PurchaseStates.enter_telegram_tag)
         await state.update_data(invoice_id=invoice_id)
     else:
-        await call.answer(f"Статус платежа: {status}")
+        await call.answer(f"Статус: {status}")
 
 @router.message(PurchaseStates.enter_telegram_tag)
 async def process_tag(message: types.Message, state: FSMContext):
