@@ -91,13 +91,15 @@ async def crypto_api_request(method: str, endpoint: str, data: dict = None):
         
         async with aiohttp.ClientSession() as session:
             async with session.request(
-                method,
+            method,
                 url,
-                json=data,
+                json=data if method == "POST" else None,  # Разделение GET/POST
+                params=data if method == "GET" else None, # Параметры для GET
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=10)
-            ) as resp:
-                response = await resp.json()
+            ) 
+                as resp:
+                    response = await resp.json()
                 
                 if resp.status != 200:
                     logger.error(f"HTTP Error {resp.status}: {response}")
@@ -198,7 +200,7 @@ async def process_currency(message: types.Message, state: FSMContext):
         stars = data['stars']
         amount_rub = stars * Config.STAR_PRICE_RUB
 
-        rates = await crypto_api_request("GET", "get-exchange-rates")
+        rates = await crypto_api_request("GET", "getExchangeRates")
         if not rates or not rates.get('result'):
             raise ValueError("Не удалось получить курсы валют")
 
@@ -217,7 +219,7 @@ async def process_currency(message: types.Message, state: FSMContext):
         invoice_id = str(uuid.uuid4())
         invoice = await crypto_api_request(
             "POST",
-            "create-invoice",
+            "createInvoice",
             {
                 "asset": message.text.upper(),
                 "amount": f"{amount_crypto:.6f}".rstrip('0').rstrip('.') if '.' in f"{amount_crypto:.6f}" else f"{amount_crypto:.6f}",
@@ -274,9 +276,9 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
         return
     
     invoice_data = await crypto_api_request(
-        "POST",
-        "get-invoices",
-        {"invoice_ids": [invoice_id]}
+        "GET",
+        f"getInvoices?invoice_ids={invoice_id}",  # ✅
+        None
     )
     
     if not invoice_data or not invoice_data.get('result'):
@@ -342,7 +344,7 @@ async def process_tag(message: types.Message, state: FSMContext):
                 
     except Exception as e:
         logger.error(f"Ошибка отправки: {str(e)}")
-        refund = await crypto_api_request("POST", f"invoices/{invoice_id}/refund")
+        refund = await crypto_api_request("POST", f"refund")
         if refund and refund.get('status') == 'completed':
             async with db.cursor() as cursor:
                 await cursor.execute(
