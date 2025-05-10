@@ -28,7 +28,7 @@ class Config:
     # Параметры товара
     STAR_PRICE_RUB = 1.6  # Фиксированная цена в продакшене
     MIN_STARS = int(os.getenv("MIN_STARS", 50))  # Новый минимальный лимит
-    MAX_STARS = int(os.getenv("MAX_STARS", 1_000_000))  # Новый максимальный лимит
+    MAX_STARS = int(os.getenv("MAX_STARS", 1000000))  # Новый максимальный лимит
     
     # URL API сервисов
     CRYPTO_API_URL = "https://pay.crypt.bot/api"
