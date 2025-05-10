@@ -278,9 +278,10 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
     invoice_id = call.data.split("_")[1]
     
     invoice_data = await crypto_api_request(
-        "GET",
-        f"getInvoices?invoice_ids={invoice_id}"
-    )
+    "POST",
+    "get-invoices",
+    {"invoice_ids": [invoice_id]}  # Параметры в теле запроса
+)
     
     if not invoice_data or not invoice_data.get('result'):
         await call.answer("❌ Ошибка проверки платежа")
