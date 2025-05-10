@@ -91,7 +91,7 @@ async def crypto_api_request(method: str, endpoint: str, data: dict = None):
         
         async with aiohttp.ClientSession() as session:
             async with session.request(
-            method,
+                method,
                 url,
                 json=data if method == "POST" else None,  # Разделение GET/POST
                 params=data if method == "GET" else None, # Параметры для GET
