@@ -435,7 +435,7 @@ async def crypto_webhook(request: web.Request):
     if data.get('invoice', {}).get('status') == 'paid':
         async with db.cursor() as cursor:
             await cursor.execute(
-                "UPDATE transactions SET status='paid' WHERE invoice_id=?"",
+                "UPDATE transactions SET status='paid' WHERE invoice_id=?",
                 (data['invoice']['id'],)
             )
     
