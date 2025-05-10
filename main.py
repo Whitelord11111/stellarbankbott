@@ -39,7 +39,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Инициализация компонентов
-bot = Bot(token=Config.TELEGRAM_TOKEN, parse_mode=ParseMode.HTML)
+bot = Bot(token=Config.TELEGRAM_TOKEN)
 dp = Dispatcher()
 router = Router()
 db = Database()
@@ -93,19 +93,21 @@ async def crypto_api_request(method: str, endpoint: str, data: dict = None):
             async with session.request(
                 method,
                 url,
-                json=data,  # Параметры теперь в теле
+                json=data,
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=10)
             ) as resp:
                 response = await resp.json()
-                if resp.status != 200:
-                    logger.error(f"CryptoBot Error {resp.status}: {response}")
-                    return None
-                return response
                 
-    except Exception as e:
-        logger.error(f"Request failed: {str(e)}")
-        return None
+                if resp.status != 200:
+                    logger.error(f"HTTP Error {resp.status}: {response}")
+                    return None
+                    
+                if not response.get('ok'):
+                    logger.error(f"API Error: {response.get('error')}")
+                    return None
+                    
+                return response
                 
     except Exception as e:
         logger.error(f"Crypto API request failed: {str(e)}")
@@ -121,7 +123,8 @@ async def start(message: types.Message):
         )
     await message.answer(
         "🚀 Добро пожаловать в магазин звёзд!",
-        reply_markup=main_menu()
+        reply_markup=main_menu(),
+        parse_mode=ParseMode.HTML
     )
 
 @router.message(F.text == "⭐️ Купить звёзды")
@@ -150,7 +153,8 @@ async def handle_package(call: types.CallbackQuery, state: FSMContext):
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(text="✅ Да", callback_data="confirm_yes"),
                 InlineKeyboardButton(text="❌ Нет", callback_data="confirm_no")
-            ]])
+            ]]),
+            parse_mode=ParseMode.HTML
         )
         await state.set_state(PurchaseStates.confirm_purchase)
 
@@ -173,7 +177,8 @@ async def process_custom_input(message: types.Message, state: FSMContext):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="✅ Да", callback_data="confirm_yes"),
             InlineKeyboardButton(text="❌ Нет", callback_data="confirm_no")
-        ]])
+        ]]),
+        parse_mode=ParseMode.HTML
     )
     await state.set_state(PurchaseStates.confirm_purchase)
 
@@ -181,7 +186,8 @@ async def process_custom_input(message: types.Message, state: FSMContext):
 async def confirm_purchase(call: types.CallbackQuery, state: FSMContext):
     await call.message.answer(
         "Выберите валюту для оплаты:",
-        reply_markup=currency_menu()
+        reply_markup=currency_menu(),
+        parse_mode=ParseMode.HTML
     )
     await state.set_state(PurchaseStates.select_currency)
 
@@ -192,12 +198,10 @@ async def process_currency(message: types.Message, state: FSMContext):
         stars = data['stars']
         amount_rub = stars * Config.STAR_PRICE_RUB
 
-        # 1. Получение курсов валют
-        rates = await crypto_api_request("GET", "getExchangeRates")  # Исправлен эндпоинт
+        rates = await crypto_api_request("GET", "get-exchange-rates")
         if not rates or not rates.get('result'):
             raise ValueError("Не удалось получить курсы валют")
 
-        # 2. Поиск нужной валюты
         currency_data = next(
             (r for r in rates['result'] 
              if r.get('source') == message.text and r.get('target') == 'RUB'),
@@ -207,15 +211,13 @@ async def process_currency(message: types.Message, state: FSMContext):
         if not currency_data:
             raise ValueError("Валюта не найдена")
 
-        # 3. Расчет суммы
         currency_rate = float(currency_data['rate'])
         amount_crypto = round(amount_rub / currency_rate, 6)
 
-        # 4. Создание инвойса
         invoice_id = str(uuid.uuid4())
         invoice = await crypto_api_request(
             "POST",
-            "createInvoice",
+            "create-invoice",
             {
                 "asset": message.text.upper(),
                 "amount": f"{amount_crypto:.6f}".rstrip('0').rstrip('.') if '.' in f"{amount_crypto:.6f}" else f"{amount_crypto:.6f}",
@@ -231,7 +233,6 @@ async def process_currency(message: types.Message, state: FSMContext):
         if not invoice or not invoice.get('result'):
             raise ValueError("Ошибка создания платежа")
 
-        # 5. Сохранение в БД
         async with db.cursor() as cursor:
             await cursor.execute(
                 """INSERT INTO transactions 
@@ -241,7 +242,6 @@ async def process_currency(message: types.Message, state: FSMContext):
                  invoice_id, "created")
             )
 
-        # 6. Формирование ответа
         pay_url = invoice['result'].get('pay_url', '')
         if not pay_url:
             raise ValueError("Некорректный ответ от платежной системы")
@@ -254,7 +254,8 @@ async def process_currency(message: types.Message, state: FSMContext):
         await message.answer(
             f"💎 Сумма к оплате: {amount_crypto} {message.text}\n"
             "⚠️ Платеж действителен 15 минут",
-            reply_markup=markup
+            reply_markup=markup,
+            parse_mode=ParseMode.HTML
         )
         await state.set_state(PurchaseStates.payment_waiting)
         await state.update_data(invoice_id=invoice_id)
@@ -268,17 +269,21 @@ async def process_currency(message: types.Message, state: FSMContext):
 async def check_payment(call: types.CallbackQuery, state: FSMContext):
     invoice_id = call.data.split("_")[1]
     
+    if not invoice_id.isalnum():
+        await call.answer("❌ Некорректный ID платежа")
+        return
+    
     invoice_data = await crypto_api_request(
-    "POST",
-    "get-invoices",
-    {"invoice_ids": [invoice_id]}  # Параметры в теле запроса
-)
+        "POST",
+        "get-invoices",
+        {"invoice_ids": [invoice_id]}
+    )
     
     if not invoice_data or not invoice_data.get('result'):
         await call.answer("❌ Ошибка проверки платежа")
         return
     
-    invoice = invoice_data['result']['items'][0]  # Важно: items[0]
+    invoice = invoice_data['result']['items'][0]
     status = invoice['status']
     
     if status == 'paid':
@@ -304,7 +309,7 @@ async def process_tag(message: types.Message, state: FSMContext):
                     "show_sender": False
                 },
                 headers={
-                    "Authorization": f"Bearer {Config.FRAGMENT_KEY}",  # Исправлено имя
+                    "Authorization": f"Bearer {Config.FRAGMENT_KEY}",
                     "Content-Type": "application/json",
                     "Accept": "application/json"
                 },
@@ -337,13 +342,16 @@ async def process_tag(message: types.Message, state: FSMContext):
                 
     except Exception as e:
         logger.error(f"Ошибка отправки: {str(e)}")
-        await crypto_api_request("POST", f"invoices/{invoice_id}/refund")
-        async with db.cursor() as cursor:
-            await cursor.execute(
-                "UPDATE transactions SET status='refunded' WHERE invoice_id=?",
-                (invoice_id,)
-            )
-        await message.answer("❌ Ошибка отправки. Средства возвращены.")
+        refund = await crypto_api_request("POST", f"invoices/{invoice_id}/refund")
+        if refund and refund.get('status') == 'completed':
+            async with db.cursor() as cursor:
+                await cursor.execute(
+                    "UPDATE transactions SET status='refunded' WHERE invoice_id=?",
+                    (invoice_id,)
+                )
+            await message.answer("❌ Ошибка отправки. Средства возвращены.")
+        else:
+            await message.answer("❌ Ошибка отправки. Обратитесь в поддержку.")
     
     await state.clear()
 
@@ -360,7 +368,8 @@ async def show_balance(message: types.Message):
         await message.answer(
             f"📊 Ваш баланс:\n"
             f"⭐️ Звёзд: {user_data['total_stars']}\n"
-            f"💰 Потрачено: {user_data['total_spent']:.2f}₽"
+            f"💰 Потрачено: {user_data['total_spent']:.2f}₽",
+            parse_mode=ParseMode.HTML
         )
     else:
         await message.answer("❌ Профиль не найден")
@@ -369,7 +378,6 @@ async def show_balance(message: types.Message):
 async def show_stats(message: types.Message):
     try:
         async with db.cursor() as cursor:
-            # Статистика пользователя
             await cursor.execute(
                 """SELECT 
                     COUNT(*) as orders, 
@@ -380,7 +388,6 @@ async def show_stats(message: types.Message):
             )
             user_stats = await cursor.fetchone()
 
-            # Общая статистика
             await cursor.execute(
                 """SELECT 
                     COALESCE(SUM(total_stars), 0) as total_stars,
@@ -389,7 +396,6 @@ async def show_stats(message: types.Message):
             )
             global_stats = await cursor.fetchone()
 
-        # Формирование ответа
         response = [
             "📊 Ваша статистика:",
             f"├ Заказов: {user_stats['orders']}",
@@ -400,10 +406,10 @@ async def show_stats(message: types.Message):
             f"└ Общая выручка: {global_stats['total_spent']:.2f}₽"
         ]
 
-        await message.answer("\n".join(response))
+        await message.answer("\n".join(response), parse_mode=ParseMode.HTML)
 
     except Exception as e:
-        logger.error(f"Ошибка при получении статистики: {str(e)}", exc_info=True)
+        logger.error(f"Ошибка при получении статистики: {str(e)}")
         await message.answer("❌ Не удалось получить статистику. Попробуйте позже.")
 
 # Вебхуки
@@ -429,7 +435,7 @@ async def crypto_webhook(request: web.Request):
     if data.get('invoice', {}).get('status') == 'paid':
         async with db.cursor() as cursor:
             await cursor.execute(
-                "UPDATE transactions SET status='paid' WHERE invoice_id=?",
+                "UPDATE transactions SET status='paid' WHERE invoice_id=?"",
                 (data['invoice']['id'],)
             )
     
