@@ -306,15 +306,23 @@ async def process_tag(message: types.Message, state: FSMContext):
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 Config.FRAGMENT_API_URL,
-                json={"username": recipient_tag, "quantity": data['stars'], "show_sender": False},
-                headers={"Authorization": f"Bearer {Config.FRAGMENT_KEY}"}
+                json={
+                    "username": recipient_tag,
+                    "quantity": data['stars'],
+                    "show_sender": False
+                },
+                headers={
+                    "Authorization": f"Bearer {Config.FRAGMENT_KEY}",  # Исправлено имя
+                    "Content-Type": "application/json",
+                    "Accept": "application/json"
+                },
+                timeout=10
             ) as resp:
                 if resp.status != 200:
                     error = await resp.text()
                     raise Exception(f"Fragment API error: {error}")
                 
                 async with db.cursor() as cursor:
-                    # Правильные отступы для вложенных блоков ▼
                     await cursor.execute(
                         """UPDATE transactions 
                         SET status='completed', 
