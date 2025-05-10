@@ -1,7 +1,5 @@
-# requirements.txt
-aiogram==3.0.0b7
-aiohttp==3.9.0
+aiogram==3.3.1  # Последняя стабильная версия
+aiohttp==3.9.5  # Совместимая версия
+aiosend==2.1.0
 python-dotenv==1.0.0
 aiosqlite==0.19.0
-aiosend==2.1.0
-magic-filter==1.0.12
