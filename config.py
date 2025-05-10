@@ -17,7 +17,7 @@ class Config:
     # Токены API (обязательные)
     TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
     CRYPTOBOT_TOKEN = os.getenv("CRYPTOBOT_TOKEN")
-    FRAGMENT_KEY = os.getenv("FRAGMENT_KEY")  # Для авторизации в Fragment API
+    FRAGMENT_API_KEY = os.getenv("FRAGMENT_API_KEY")  # Для авторизации в Fragment API
     
     # Вебхуки и сервер
     WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "render_default_secret")
