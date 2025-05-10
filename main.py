@@ -344,29 +344,33 @@ async def show_balance(message: types.Message):
 async def show_stats(message: types.Message):
     try:
         async with db.cursor() as cursor:
-            # User stats
+            # Статистика пользователя
             await cursor.execute(
-                """SELECT COUNT(*) as orders, 
-                        COALESCE(SUM(stars), 0) as stars 
+                """SELECT 
+                    COUNT(*) as orders, 
+                    COALESCE(SUM(stars), 0) as stars 
                 FROM transactions 
                 WHERE user_id = ? AND status = 'completed'""",
                 (message.from_user.id,)
+            )
             user_stats = await cursor.fetchone()
 
-            # Global stats
+            # Общая статистика
             await cursor.execute(
-                """SELECT COALESCE(SUM(total_stars), 0) as total_stars,
-                        COALESCE(SUM(total_spent), 0) as total_spent 
+                """SELECT 
+                    COALESCE(SUM(total_stars), 0) as total_stars,
+                    COALESCE(SUM(total_spent), 0) as total_spent 
                 FROM users"""
             )
             global_stats = await cursor.fetchone()
 
+        # Формирование ответа
         response = [
-            "📈 Ваша статистика:",
+            "📊 Ваша статистика:",
             f"├ Заказов: {user_stats['orders']}",
-            f"└ Звёзд: {user_stats['stars']}",
+            f"└ Получено звёзд: {user_stats['stars']}",
             "",
-            "🌐 Общая статистика:",
+            "🌐 Общая статистика бота:",
             f"├ Всего звёзд: {global_stats['total_stars']}",
             f"└ Общая выручка: {global_stats['total_spent']:.2f}₽"
         ]
@@ -374,8 +378,9 @@ async def show_stats(message: types.Message):
         await message.answer("\n".join(response))
 
     except Exception as e:
-        logger.error(f"Stats error: {str(e)}")
-        await message.answer("❌ Ошибка при получении статистики")
+        logger.error(f"Ошибка при получении статистики: {str(e)}", exc_info=True)
+        await message.answer("❌ Не удалось получить статистику. Попробуйте позже.")
+
 # Вебхуки
 async def telegram_webhook(request: web.Request):
     return await SimpleRequestHandler(
