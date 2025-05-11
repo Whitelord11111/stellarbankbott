@@ -9,6 +9,8 @@ from aiosend.types import Invoice
 from config import Config
 from database import Database
 import aiohttp
+from aiohttp import web
+import os
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -113,11 +115,26 @@ async def send_stars(message: types.Message, state: FSMContext):
     
     await state.clear()
 
+
+
+async def web_app():
+    app = web.Application()
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.getenv("PORT", 10000))  # Получаем порт из окружения
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    return app
+
 async def main():
     await db.connect()
-    await cp.start_polling()
+    
+    # Запуск веб-сервера
+    app = await web_app()
+    
+    # Запуск бота и поллинга
     await dp.start_polling(bot)
+    await cp.start_polling()
 
 if __name__ == "__main__":
-    import asyncio
     asyncio.run(main())
