@@ -28,6 +28,10 @@ class PurchaseStates(StatesGroup):
 
 async def init_webhooks(app: web.Application):
     """Инициализация вебхуков"""
+    # Проверка корректности URL
+    if not Config.WEBHOOK_URL.startswith("https://"):
+        raise ValueError("WEBHOOK_URL должен начинаться с https://")
+    
     # Инициализация CryptoPay
     cp = CryptoPay(
         token=Config.CRYPTOBOT_TOKEN,
@@ -43,8 +47,11 @@ async def init_webhooks(app: web.Application):
     
     # Настройка вебхука для Telegram
     await bot.delete_webhook(drop_pending_updates=True)
+    webhook_url = f"{Config.WEBHOOK_URL}/telegram_webhook"
+    logger.info(f"Устанавливаю вебхук: {webhook_url}")
+    
     await bot.set_webhook(
-        url=f"{Config.WEBHOOK_URL}/telegram_webhook",
+        url=webhook_url,
         secret_token=os.getenv("WEBHOOK_SECRET")
     )
     
@@ -52,6 +59,8 @@ async def init_webhooks(app: web.Application):
 
 @dp.message(Command("start"))
 async def start(message: types.Message):
+    """Обработчик команды /start с логированием"""
+    logger.info(f"Получена команда /start от {message.from_user.id}")
     await message.answer(
         "🚀 Добро пожаловать! Купите звёзды через CryptoBot:",
         reply_markup=types.ReplyKeyboardMarkup(
@@ -136,6 +145,16 @@ async def send_stars(message: types.Message, state: FSMContext):
     
     await state.clear()
 
+async def telegram_webhook(request):
+    """Кастомный обработчик вебхуков Telegram"""
+    try:
+        request_data = await request.json()
+        logger.debug(f"Получен вебхук: {request_data}")
+        return await dp._check_webhook(bot)(request)
+    except Exception as e:
+        logger.error(f"Ошибка обработки вебхука: {str(e)}")
+        return web.Response(status=500)
+
 async def main():
     await db.connect()
     
@@ -145,11 +164,8 @@ async def main():
     # Инициализация вебхуков
     cp = await init_webhooks(app)
     
-    # Регистрация эндпоинта Telegram
-    app.router.add_post(
-        "/telegram_webhook", 
-        lambda r: dp._check_webhook(bot)(r)
-    )
+    # Регистрация эндпоинтов
+    app.router.add_post("/telegram_webhook", telegram_webhook)
     
     # Запуск сервера
     runner = web.AppRunner(app)
@@ -157,7 +173,10 @@ async def main():
     site = web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", 10000)))
     await site.start()
     
-    logger.info("Сервер запущен на порту 10000")
+    logger.info(f"Сервер запущен на порту {os.getenv('PORT', 10000)}")
+    logger.info(f"Telegram вебхук: {Config.WEBHOOK_URL}/telegram_webhook")
+    logger.info(f"CryptoBot вебхук: {Config.WEBHOOK_URL}/crypto_webhook")
+    
     await asyncio.Future()
 
 if __name__ == "__main__":
