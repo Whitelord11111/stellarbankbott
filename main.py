@@ -9,28 +9,26 @@ from aiosend import CryptoPay
 from aiosend.types import Invoice
 from config import Config
 from database import Database
-import aiohttp
 from aiohttp import web
 import os
 
+# Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Инициализация
 bot = Bot(token=Config.TELEGRAM_TOKEN)
 dp = Dispatcher()
 db = Database()
 cp = CryptoPay(token=Config.CRYPTOBOT_TOKEN)
 
+# Состояния FSM
 class PurchaseStates(StatesGroup):
     SELECT_AMOUNT = State()
     CONFIRM_PAYMENT = State()
     ENTER_RECIPIENT = State()
 
-async def convert_to_usd(amount_rub: float) -> float:
-    rates = await cp.get_exchange_rates()
-    usd_rate = next(r.rate for r in rates if r.source == 'USDT' and r.target == 'USD')
-    return amount_rub / usd_rate
-
+# Хендлеры
 @dp.message(Command("start"))
 async def start(message: types.Message):
     await message.answer(
@@ -81,7 +79,6 @@ async def process_amount(message: types.Message, state: FSMContext):
 async def handle_paid_invoice(invoice: Invoice):
     if invoice.status == "paid":
         logger.info(f"Оплачен инвойс: {invoice.invoice_id}")
-        # Логика обработки успешной оплаты
 
 @dp.callback_query(F.data.startswith("check_"))
 async def check_payment(call: types.CallbackQuery, state: FSMContext):
@@ -107,33 +104,25 @@ async def send_stars(message: types.Message, state: FSMContext):
         ) as resp:
             if resp.status == 200:
                 await message.answer(f"🌟 {data['stars']} звёзд отправлены @{recipient}!")
-                await db.update_transaction(data['invoice_id'], 'completed')
             else:
                 error = await resp.text()
                 logger.error(f"Fragment API Error: {error}")
                 await message.answer("❌ Ошибка отправки. Обратитесь в поддержку.")
-                await db.update_transaction(data['invoice_id'], 'failed')
     
     await state.clear()
-
-
 
 async def web_app():
     app = web.Application()
     runner = web.AppRunner(app)
     await runner.setup()
-    port = int(os.getenv("PORT", 10000))  # Получаем порт из окружения
+    port = int(os.getenv("PORT", 10000))
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
     return app
 
 async def main():
     await db.connect()
-    
-    # Запуск веб-сервера
     app = await web_app()
-    
-    # Запуск бота и поллинга
     await dp.start_polling(bot)
     await cp.start_polling()
 
