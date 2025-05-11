@@ -6,7 +6,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiosend import CryptoPay
 from aiosend.types import Invoice
-from aiosend.webhook import AiohttpManager  # <-- Добавлен импорт
+from aiosend.webhook import AiohttpManager
 from config import Config
 from database import Database
 from aiohttp import web
@@ -20,63 +20,47 @@ logger = logging.getLogger(__name__)
 bot = Bot(token=Config.TELEGRAM_TOKEN)
 dp = Dispatcher()
 db = Database()
-cp = CryptoPay(
-    token=Config.CRYPTOBOT_TOKEN,
-    webhook_manager=AiohttpManager(  # <-- Добавлен вебхук-менеджер
-        app=None,  # Будет установлено позже
-        path="/crypto_webhook"
-    )
-)
 
 class PurchaseStates(StatesGroup):
     SELECT_AMOUNT = State()
     CONFIRM_PAYMENT = State()
     ENTER_RECIPIENT = State()
 
-async def setup_webhook(app: web.Application):
-    """Настройка вебхуков"""
-    # Для Telegram
+async def create_app():
+    """Создание и настройка веб-приложения"""
+    app = web.Application()
+    
+    # Инициализация CryptoPay после создания приложения
+    cp = CryptoPay(
+        token=Config.CRYPTOBOT_TOKEN,
+        webhook_manager=AiohttpManager(app, "/crypto_webhook")
+    )
+    
+    # Регистрация обработчиков
+    app.router.add_post(
+        "/telegram_webhook", 
+        lambda r: dp._check_webhook(bot)(r)
+    )
+    
+    # Настройка вебхука для Telegram
     await bot.delete_webhook(drop_pending_updates=True)
     await bot.set_webhook(
         url=f"{Config.WEBHOOK_URL}/telegram_webhook",
         secret_token=os.getenv("WEBHOOK_SECRET")
     )
     
-    # Для CryptoBot
-    cp.webhook_manager.app = app  # <-- Привязываем приложение
-
-async def web_application():
-    """Создание веб-приложения"""
-    app = web.Application()
-    
-    # Регистрация эндпоинтов
-    app.router.add_post(
-        "/telegram_webhook", 
-        lambda r: dp._check_webhook(bot)(r)
-    )
-    
-    # Инициализация вебхуков
-    await setup_webhook(app)
-    
-    # Настройка сервера
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", 10000)))
-    await site.start()
-    return app
+    return app, cp
 
 @cp.webhook()
 async def crypto_webhook_handler(invoice: Invoice):
-    """Обработчик вебхуков CryptoPay"""
+    """Обработчик платежей CryptoBot"""
     if invoice.status == "paid":
         logger.info(f"Оплачен инвойс: {invoice.invoice_id}")
         # Логика обработки оплаты
-        # Пример: await process_paid_invoice(invoice)
     return web.Response(text="OK")
 
 @dp.message(Command("start"))
 async def start(message: types.Message):
-    """Обработчик команды /start"""
     await message.answer(
         "🚀 Добро пожаловать! Купите звёзды через CryptoBot:",
         reply_markup=types.ReplyKeyboardMarkup(
@@ -162,7 +146,16 @@ async def send_stars(message: types.Message, state: FSMContext):
 
 async def main():
     await db.connect()
-    app = await web_application()
+    
+    # Создание приложения и компонентов
+    app, cp = await create_app()
+    
+    # Запуск сервера
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", 10000)))
+    await site.start()
+    
     logger.info("Сервер запущен на порту 10000")
     await asyncio.Future()  # Бесконечное ожидание
 
