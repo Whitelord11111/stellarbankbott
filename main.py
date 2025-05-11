@@ -1,4 +1,3 @@
-# main.py
 import asyncio
 import logging
 from aiogram import Bot, Dispatcher, types, F
@@ -16,7 +15,7 @@ import os
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Инициализация
+# Инициализация компонентов
 bot = Bot(token=Config.TELEGRAM_TOKEN)
 dp = Dispatcher()
 db = Database()
@@ -28,9 +27,44 @@ class PurchaseStates(StatesGroup):
     CONFIRM_PAYMENT = State()
     ENTER_RECIPIENT = State()
 
-# Хендлеры
+async def setup_webhook():
+    """Настройка вебхуков для Telegram и CryptoBot"""
+    await bot.delete_webhook(drop_pending_updates=True)
+    await bot.set_webhook(
+        url=f"{Config.WEBHOOK_URL}/telegram_webhook",
+        secret_token=os.getenv("WEBHOOK_SECRET")
+    )
+
+async def web_application():
+    """Создание веб-приложения с обработчиками"""
+    app = web.Application()
+    
+    # Регистрация эндпоинтов
+    app.router.add_post("/telegram_webhook", lambda r: dp._check_webhook(bot)(r))
+    app.router.add_post("/crypto_webhook", crypto_webhook_handler)
+    
+    # Настройка сервера
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", 10000)))
+    await site.start()
+    return app
+
+@cp.webhook()
+async def crypto_webhook_handler(request):
+    """Обработчик вебхуков от CryptoBot"""
+    data = await request.json()
+    invoice = Invoice(**data)
+    
+    if invoice.status == "paid":
+        logger.info(f"Оплачен инвойс: {invoice.invoice_id}")
+        # Здесь можно добавить логику обработки оплаты
+        
+    return web.Response(text="OK")
+
 @dp.message(Command("start"))
 async def start(message: types.Message):
+    """Обработчик команды /start"""
     await message.answer(
         "🚀 Добро пожаловать! Купите звёзды через CryptoBot:",
         reply_markup=types.ReplyKeyboardMarkup(
@@ -41,16 +75,18 @@ async def start(message: types.Message):
 
 @dp.message(F.text == "⭐️ Купить звёзды")
 async def buy_stars(message: types.Message, state: FSMContext):
+    """Начало процесса покупки"""
     await message.answer(f"Введите количество звёзд ({Config.MIN_STARS}-{Config.MAX_STARS}):")
     await state.set_state(PurchaseStates.SELECT_AMOUNT)
 
 @dp.message(PurchaseStates.SELECT_AMOUNT)
 async def process_amount(message: types.Message, state: FSMContext):
+    """Обработка ввода количества звёзд"""
     try:
         stars = int(message.text)
         if not (Config.MIN_STARS <= stars <= Config.MAX_STARS):
             raise ValueError
-            
+
         amount_usd = stars * Config.STAR_PRICE_USD
         invoice = await cp.create_invoice(
             amount=amount_usd,
@@ -75,13 +111,9 @@ async def process_amount(message: types.Message, state: FSMContext):
         await message.answer("❌ Некорректное количество!")
         await state.clear()
 
-@cp.invoice_polling()
-async def handle_paid_invoice(invoice: Invoice):
-    if invoice.status == "paid":
-        logger.info(f"Оплачен инвойс: {invoice.invoice_id}")
-
 @dp.callback_query(F.data.startswith("check_"))
 async def check_payment(call: types.CallbackQuery, state: FSMContext):
+    """Проверка статуса оплаты"""
     invoice_id = int(call.data.split("_")[1])
     invoice = await cp.get_invoice(invoice_id)
     
@@ -93,38 +125,38 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
 
 @dp.message(PurchaseStates.ENTER_RECIPIENT)
 async def send_stars(message: types.Message, state: FSMContext):
+    """Отправка звёзд через Fragment API"""
     data = await state.get_data()
     recipient = message.text.strip("@")
     
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
-            "https://api.fragment-api.com/v1/order/stars/",
-            json={"username": recipient, "quantity": data['stars']},
-            headers={"Authorization": Config.FRAGMENT_KEY}
-        ) as resp:
-            if resp.status == 200:
-                await message.answer(f"🌟 {data['stars']} звёзд отправлены @{recipient}!")
-            else:
-                error = await resp.text()
-                logger.error(f"Fragment API Error: {error}")
-                await message.answer("❌ Ошибка отправки. Обратитесь в поддержку.")
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                "https://api.fragment-api.com/v1/order/stars/",
+                json={"username": recipient, "quantity": data['stars']},
+                headers={"Authorization": Config.FRAGMENT_KEY}
+            ) as resp:
+                if resp.status == 200:
+                    await message.answer(f"🌟 {data['stars']} звёзд отправлены @{recipient}!")
+                else:
+                    error = await resp.text()
+                    logger.error(f"Fragment API Error: {error}")
+                    await message.answer("❌ Ошибка отправки. Обратитесь в поддержку.")
+    except Exception as e:
+        logger.error(f"Ошибка соединения: {str(e)}")
+        await message.answer("⚠️ Сервис временно недоступен. Попробуйте позже.")
     
     await state.clear()
 
-async def web_app():
-    app = web.Application()
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = int(os.getenv("PORT", 10000))
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
-    return app
-
 async def main():
+    """Основная функция инициализации"""
     await db.connect()
-    app = await web_app()
-    await dp.start_polling(bot)
-    await cp.start_polling()
+    await setup_webhook()
+    app = await web_application()
+    logger.info("Сервер успешно запущен")
+    
+    # Бесконечное ожидание
+    await asyncio.Future()
 
 if __name__ == "__main__":
     asyncio.run(main())
