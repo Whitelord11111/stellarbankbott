@@ -26,21 +26,20 @@ class PurchaseStates(StatesGroup):
     CONFIRM_PAYMENT = State()
     ENTER_RECIPIENT = State()
 
-async def create_app():
-    """Создание и настройка веб-приложения"""
-    app = web.Application()
-    
-    # Инициализация CryptoPay после создания приложения
+async def init_webhooks(app: web.Application):
+    """Инициализация вебхуков"""
+    # Инициализация CryptoPay
     cp = CryptoPay(
         token=Config.CRYPTOBOT_TOKEN,
         webhook_manager=AiohttpManager(app, "/crypto_webhook")
     )
     
-    # Регистрация обработчиков
-    app.router.add_post(
-        "/telegram_webhook", 
-        lambda r: dp._check_webhook(bot)(r)
-    )
+    # Регистрация обработчика для CryptoBot
+    @cp.webhook()
+    async def crypto_webhook_handler(invoice: Invoice):
+        if invoice.status == "paid":
+            logger.info(f"Оплачен инвойс: {invoice.invoice_id}")
+        return web.Response(text="OK")
     
     # Настройка вебхука для Telegram
     await bot.delete_webhook(drop_pending_updates=True)
@@ -49,15 +48,7 @@ async def create_app():
         secret_token=os.getenv("WEBHOOK_SECRET")
     )
     
-    return app, cp
-
-@cp.webhook()
-async def crypto_webhook_handler(invoice: Invoice):
-    """Обработчик платежей CryptoBot"""
-    if invoice.status == "paid":
-        logger.info(f"Оплачен инвойс: {invoice.invoice_id}")
-        # Логика обработки оплаты
-    return web.Response(text="OK")
+    return cp
 
 @dp.message(Command("start"))
 async def start(message: types.Message):
@@ -68,6 +59,7 @@ async def start(message: types.Message):
             resize_keyboard=True
         )
     )
+
 
 @dp.message(F.text == "⭐️ Купить звёзды")
 async def buy_stars(message: types.Message, state: FSMContext):
@@ -147,8 +139,17 @@ async def send_stars(message: types.Message, state: FSMContext):
 async def main():
     await db.connect()
     
-    # Создание приложения и компонентов
-    app, cp = await create_app()
+    # Создание веб-приложения
+    app = web.Application()
+    
+    # Инициализация вебхуков
+    cp = await init_webhooks(app)
+    
+    # Регистрация эндпоинта Telegram
+    app.router.add_post(
+        "/telegram_webhook", 
+        lambda r: dp._check_webhook(bot)(r)
+    )
     
     # Запуск сервера
     runner = web.AppRunner(app)
@@ -157,7 +158,7 @@ async def main():
     await site.start()
     
     logger.info("Сервер запущен на порту 10000")
-    await asyncio.Future()  # Бесконечное ожидание
+    await asyncio.Future()
 
 if __name__ == "__main__":
     asyncio.run(main())
