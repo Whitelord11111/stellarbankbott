@@ -11,4 +11,4 @@ class Config:
     STAR_PRICE_RUB = 1.6
     MIN_STARS = 50
     MAX_STARS = 1000000
-    ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS", "").split(",")))
+    ADMIN_IDS = list(map(int( os.getenv("ADMIN_IDS", "").split(","))))
