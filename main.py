@@ -5,6 +5,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiosend import CryptoPay
+from aiosend.types import Invoice
 from config import Config
 from database import Database
 import aiohttp
